@@ -36,11 +36,37 @@
 #define CONFIG_H
 
 // ============================================
+// CREDENTIALS - OVERRIDE IN config_local.h
+// ============================================
+// Create 'config_local.h' with your actual WiFi/MQTT credentials
+// Use config_local.h.example as a template
+// config_local.h is git-ignored and won't be committed
+
+// Default values (will be overridden by config_local.h if it exists)
+#ifndef WIFI_SSID
+#define WIFI_SSID "YourWiFiSSID"          // Change in config_local.h
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "YourWiFiPassword"  // Change in config_local.h
+#endif
+#ifndef MQTT_SERVER
+#define MQTT_SERVER "192.168.1.10"        // Change in config_local.h
+#endif
+#ifndef MQTT_USER
+#define MQTT_USER "mqtt_user"             // Change in config_local.h
+#endif
+#ifndef MQTT_PASSWORD
+#define MQTT_PASSWORD "mqtt_password"     // Change in config_local.h
+#endif
+
+// Include local credentials override
+#if __has_include("config_local.h")
+#include "config_local.h"
+#endif
+
+// ============================================
 // WIFI CONFIGURATION
 // ============================================
-#define WIFI_SSID "YourWiFiSSID"          // Change to your WiFi network name
-#define WIFI_PASSWORD "YourWiFiPassword"  // Change to your WiFi password
-
 // Static IP Configuration (optional)
 #define USE_STATIC_IP false               // Set to true to use static IP
 #define STATIC_IP IPAddress(192, 168, 1, 100)
@@ -52,10 +78,7 @@
 // MQTT CONFIGURATION
 // ============================================
 #define MQTT_ENABLED true                 // Enable/disable MQTT integration
-#define MQTT_SERVER "192.168.1.10"        // MQTT broker IP address
 #define MQTT_PORT 1883                    // MQTT broker port
-#define MQTT_USER "mqtt_user"             // MQTT username (empty string if none)
-#define MQTT_PASSWORD "mqtt_password"     // MQTT password (empty string if none)
 #define MQTT_CLIENT_ID "sleighvo"         // Unique client ID for MQTT
 
 // MQTT Topics
@@ -67,7 +90,7 @@
 // ============================================
 // E1.31 (sACN) CONFIGURATION
 // ============================================
-#define E131_MULTICAST true               // Use multicast (recommended)
+#define USE_E131_MULTICAST true           // Use multicast (true) or unicast (false)
 #define E131_UNIVERSE 1                   // Universe number for E1.31
 #define E131_CHANNELS 512                 // Number of DMX channels
 #define E131_IDLE_TIMEOUT 5000            // Time (ms) before considering E1.31 inactive
@@ -92,6 +115,7 @@
 #define SERVO_FREQ 50                     // Servo PWM frequency (Hz) - standard is 50Hz
 #define SERVOMIN 150                      // Minimum pulse length (out of 4096)
 #define SERVOMAX 600                      // Maximum pulse length (out of 4096)
+#define TEST_SERVOS_ON_STARTUP true       // Test all servos during startup (set false to skip)
 
 // Servo names for debugging/display
 const char* SERVO_NAMES[] = {

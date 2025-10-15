@@ -28,6 +28,11 @@
 #include "AudioOutputI2S.h"
 #include "config.h"
 
+#ifdef DISABLE_BROWNOUT_DETECTOR
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+#endif
+
 // ============================================
 // GLOBAL OBJECTS
 // ============================================
@@ -182,13 +187,70 @@ void setupWiFi() {
     }
 }
 
+bool checkI2CDevice(uint8_t address) {
+    Wire.beginTransmission(address);
+    uint8_t error = Wire.endTransmission();
+    return (error == 0);
+}
+
+void scanI2CBus() {
+    Serial.println("\n=== I2C Bus Scan ===");
+    Serial.print("Scanning I2C bus (SDA=");
+    Serial.print(I2C_SDA);
+    Serial.print(", SCL=");
+    Serial.print(I2C_SCL);
+    Serial.println(")...");
+
+    int deviceCount = 0;
+    for (uint8_t address = 1; address < 127; address++) {
+        if (checkI2CDevice(address)) {
+            Serial.print("  Found device at 0x");
+            if (address < 16) Serial.print("0");
+            Serial.println(address, HEX);
+            deviceCount++;
+        }
+    }
+
+    if (deviceCount == 0) {
+        Serial.println("✗ No I2C devices found!");
+        Serial.println("  Check wiring:");
+        Serial.print("    SDA -> GPIO ");
+        Serial.println(I2C_SDA);
+        Serial.print("    SCL -> GPIO ");
+        Serial.println(I2C_SCL);
+        Serial.println("    VCC -> 5V");
+        Serial.println("    GND -> GND");
+    } else {
+        Serial.print("✓ Found ");
+        Serial.print(deviceCount);
+        Serial.println(" I2C device(s)");
+    }
+}
+
 void setupPCA9685() {
     Serial.println("\n=== PCA9685 Setup ===");
-    
+
     Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(100000);  // 100kHz I2C speed (standard mode)
+    delay(100);
+
+    // Check if PCA9685 is present
+    Serial.print("Looking for PCA9685 at address 0x");
+    Serial.println(PCA9685_ADDRESS, HEX);
+
+    if (!checkI2CDevice(PCA9685_ADDRESS)) {
+        Serial.println("✗ PCA9685 not found!");
+        scanI2CBus();
+        Serial.println("\n⚠ Continuing without servo control...");
+        return;
+    }
+
+    Serial.println("✓ PCA9685 detected");
+
     pwm.begin();
     pwm.setPWMFreq(SERVO_FREQ);
-    
+    delay(100);
+
     // Initialize all servos to center
     for (int i = 0; i < NUM_SERVOS; i++) {
         if (SERVO_CONFIGS[i].enabled) {
@@ -203,13 +265,70 @@ void setupPCA9685() {
     Serial.println("✓ Servos initialized");
 }
 
+void testAllServos() {
+    Serial.println("\n=== Servo Test Sequence ===");
+    Serial.println("Testing each servo with full range sweep...");
+
+    // Test each servo individually
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        if (!SERVO_CONFIGS[i].enabled) {
+            Serial.print("Servo ");
+            Serial.print(i);
+            Serial.print(" (");
+            Serial.print(SERVO_NAMES[i]);
+            Serial.println(") - DISABLED");
+            continue;
+        }
+
+        Serial.print("Testing Servo ");
+        Serial.print(i);
+        Serial.print(" (");
+        Serial.print(SERVO_NAMES[i]);
+        Serial.println(")...");
+
+        // Center position
+        setServoAngle(i, 90, "test");
+        delay(300);
+
+        // Sweep to minimum
+        for (int angle = 90; angle >= 0; angle -= 10) {
+            setServoAngle(i, angle, "test");
+            delay(50);
+        }
+
+        // Sweep to maximum
+        for (int angle = 0; angle <= 180; angle += 10) {
+            setServoAngle(i, angle, "test");
+            delay(50);
+        }
+
+        // Back to center
+        for (int angle = 180; angle >= 90; angle -= 10) {
+            setServoAngle(i, angle, "test");
+            delay(50);
+        }
+
+        Serial.print("  ✓ Servo ");
+        Serial.print(i);
+        Serial.println(" test complete");
+        delay(200);
+    }
+
+    Serial.println("✓ All servo tests complete!");
+    delay(500);  // Brief pause before continuing
+}
+
 void setupE131() {
     Serial.println("\n=== E1.31 Setup ===");
-    
-    if (E131_MULTICAST) {
-        if (e131.begin(E131_MULTICAST, E131_UNIVERSE, 1)) {
+
+    if (USE_E131_MULTICAST) {
+        if (e131.begin(E131_MULTICAST, E131_UNIVERSE)) {
             Serial.print("✓ E1.31 multicast universe ");
             Serial.println(E131_UNIVERSE);
+        }
+    } else {
+        if (e131.begin(E131_UNICAST)) {
+            Serial.print("✓ E1.31 unicast mode");
         }
     }
 }
@@ -850,7 +969,7 @@ void publishMQTTState() {
     if (!MQTT_ENABLED || !mqttClient.connected()) return;
 
     // Create JSON state document
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
 
     // System mode
     switch (system_state.current_mode) {
@@ -1036,9 +1155,14 @@ void setupWebServer() {
 // ============================================
 
 void setup() {
+    #ifdef DISABLE_BROWNOUT_DETECTOR
+    // Disable brownout detector (use better power supply instead)
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+    #endif
+
     Serial.begin(115200);
     delay(1000);
-    
+
     Serial.println("\n\n=========================================");
     Serial.println("   ESP32 Servo Controller");
     Serial.println("   with Standalone Mode");
@@ -1046,13 +1170,18 @@ void setup() {
     
     setupWiFi();
     setupPCA9685();
+
+    #if TEST_SERVOS_ON_STARTUP
+    testAllServos();  // Test all servos on startup
+    #endif
+
     setupE131();
     setupSDCard();
     setupAudio();
     setupTriggers();
     setupMQTT();
     setupWebServer();
-    
+
     switchMode(MODE_IDLE);
     
     Serial.println("\n=========================================");

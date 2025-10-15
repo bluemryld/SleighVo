@@ -1,0 +1,25 @@
+/*
+ * Local Configuration Override - EXAMPLE FILE
+ *
+ * Copy this file to 'config_local.h' and add your real credentials.
+ * The config_local.h file will not be tracked by git.
+ *
+ * INSTRUCTIONS:
+ * 1. Copy this file: config_local.h.example -> config_local.h
+ * 2. Edit config_local.h with your actual credentials
+ * 3. Build and upload to your ESP32
+ */
+
+#ifndef CONFIG_LOCAL_H
+#define CONFIG_LOCAL_H
+
+// WiFi Credentials
+#define WIFI_SSID "YourActualWiFiName"
+#define WIFI_PASSWORD "YourActualWiFiPassword"
+
+// MQTT Credentials (if using MQTT)
+#define MQTT_SERVER "192.168.1.10"
+#define MQTT_USER "your_mqtt_username"
+#define MQTT_PASSWORD "your_mqtt_password"
+
+#endif // CONFIG_LOCAL_H
