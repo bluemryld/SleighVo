@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir)",
+      "Bash(pio:*)",
+      "Bash(platformio:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: SleighVo ESP32 Animatronic Controller\n\nAdd complete ESP32-based animatronic controller with:\n- Multi-mode operation (E1.31, Standalone, Idle)\n- Home Assistant MQTT auto-discovery integration\n- PCA9685 servo control (up to 8 servos)\n- Keyframe-based animation system\n- SD card audio playback (MP3 via I2S)\n- Multiple trigger options (button, PIR, MQTT, web)\n- Complete hardware configuration system\n- Comprehensive documentation\n\nKey files:\n- src/main.cpp: Complete application (~1100 lines)\n- include/config.h: Hardware configuration with setup checklist\n- README.md: User documentation with examples\n- CLAUDE.md: Architecture and development guide\n\nFeatures:\n- xLights E1.31 integration with priority override\n- Synchronized audio and servo animations\n- Home Assistant entities (switch, sensors, button)\n- Real-time state publishing and statistics\n- PIR motion detection with cooldown\n- Debounced button with long-press support\n\nGenerated with Claude Code (https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
