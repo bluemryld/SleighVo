@@ -69,6 +69,7 @@ enum SystemMode {
     MODE_E131,          // xLights is playing
     MODE_STANDALONE,    // Local playback active
     MODE_IDLE,          // Waiting, subtle movements
+    MODE_TEST,          // Manual servo testing, all protocols ignored
     MODE_STARTUP        // Initial state
 };
 
@@ -657,6 +658,12 @@ void processDDPPacket() {
     last_ddp_packet = millis();
     stats.ddp_packets_received++;
 
+    // Ignore DDP input in test mode
+    if (system_state.current_mode == MODE_TEST) {
+        ddpUdp.flush();
+        return;
+    }
+
     // Map pixels to servos
     // Each servo uses DDP_BYTES_PER_SERVO bytes (typically 3 for RGB)
     // We use the first byte (R channel) as servo position (0-255)
@@ -1078,6 +1085,10 @@ void switchMode(SystemMode newMode) {
             Serial.println("Idle");
             digitalWrite(BUTTON_LED_PIN, LOW);
             break;
+        case MODE_TEST:
+            Serial.println("Test Mode (all protocols ignored)");
+            digitalWrite(BUTTON_LED_PIN, HIGH);
+            break;
         case MODE_STARTUP:
             Serial.println("Startup");
             break;
@@ -1085,6 +1096,11 @@ void switchMode(SystemMode newMode) {
 }
 
 void updateSystemMode() {
+    // TEST mode overrides everything - ignore all protocol input
+    if (system_state.current_mode == MODE_TEST) {
+        return;
+    }
+    
     // E1.31 and DDP have highest priority (network-based real-time control)
     bool networkActive = isE131Active();
 
@@ -1215,6 +1231,11 @@ void processE131Packet() {
         
         stats.packets_received++;
         system_state.last_e131_packet = millis();
+        
+        // Ignore E1.31 input in test mode
+        if (system_state.current_mode == MODE_TEST) {
+            return;
+        }
         
         // Process servos
         for (int servo = 0; servo < NUM_SERVOS; servo++) {
@@ -1377,6 +1398,9 @@ void publishMQTTState() {
             break;
         case MODE_IDLE:
             doc["mode"] = "Idle";
+            break;
+        case MODE_TEST:
+            doc["mode"] = "Test";
             break;
         case MODE_STARTUP:
             doc["mode"] = "Startup";
@@ -1550,6 +1574,7 @@ const char* getModeName(SystemMode mode) {
         case MODE_E131: return "E1.31";
         case MODE_STANDALONE: return "Standalone";
         case MODE_IDLE: return "Idle";
+        case MODE_TEST: return "Test";
         case MODE_STARTUP: return "Startup";
         default: return "Unknown";
     }
@@ -2153,6 +2178,25 @@ void handleRoot() {
             color: #999;
             margin-top: 3px;
         }
+        .servo-slider {
+            width: 100%;
+            margin-top: 10px;
+            accent-color: #667eea;
+        }
+        .servo-slider:disabled {
+            opacity: 0.5;
+        }
+        .btn-test {
+            background: #17a2b8;
+            color: white;
+        }
+        .btn-test:hover {
+            background: #138496;
+        }
+        .btn-test.active {
+            background: #ffc107;
+            color: #333;
+        }
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -2259,6 +2303,9 @@ void handleRoot() {
                 <button class="btn btn-primary" onclick="testServos()">
                     🎮 Test Servos
                 </button>
+                <button class="btn btn-test" id="testModeBtn" onclick="toggleTestMode()">
+                    🔬 Test Mode
+                </button>
             </div>
             <div class="control-group" style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #f0f0f0;">
                 <button class="btn btn-danger" onclick="resetWiFi()" style="background: #dc3545;">
@@ -2306,12 +2353,17 @@ void handleRoot() {
     </div>
 
     <script>
+        let isTestMode = false;
+
         function updateStatus() {
             fetch('/api/status')
                 .then(response => response.json())
                 .then(data => {
                     // System status
-                    document.getElementById('mode').textContent = data.mode;
+                    const currentMode = data.mode;
+                    isTestMode = (currentMode === 'Test');
+                    
+                    document.getElementById('mode').textContent = currentMode;
                     document.getElementById('e131').textContent = data.e131_active ? 'Active' : 'Inactive';
                     document.getElementById('e131').className = 'status-value ' + (data.e131_active ? 'active' : 'inactive');
                     document.getElementById('ddp').textContent = data.ddp_active ? 'Active' : 'Inactive';
@@ -2323,6 +2375,16 @@ void handleRoot() {
                     document.getElementById('uptime').textContent = formatUptime(data.uptime);
                     document.getElementById('rssi').textContent = data.rssi + ' dBm';
 
+                    // Update test mode button
+                    const testBtn = document.getElementById('testModeBtn');
+                    if (isTestMode) {
+                        testBtn.classList.add('active');
+                        testBtn.textContent = '🔬 Exit Test Mode';
+                    } else {
+                        testBtn.classList.remove('active');
+                        testBtn.textContent = '🔬 Test Mode';
+                    }
+
                     // Statistics
                     document.getElementById('stat-e131').textContent = data.stats.e131_packets;
                     document.getElementById('stat-ddp').textContent = data.stats.ddp_packets;
@@ -2330,17 +2392,30 @@ void handleRoot() {
                     document.getElementById('stat-buttons').textContent = data.stats.button_presses;
                     document.getElementById('stat-motion').textContent = data.stats.motion_detects;
 
-                    // Servo positions
+                    // Servo positions - show sliders in test mode
                     let servoHTML = '';
                     data.servos.forEach((servo, i) => {
                         if (servo.enabled) {
-                            servoHTML += `
-                                <div class="servo-item">
-                                    <div class="servo-name">${servo.name}</div>
-                                    <div class="servo-angle">${servo.angle}°</div>
-                                    <div class="servo-source">${servo.source}</div>
-                                </div>
-                            `;
+                            if (isTestMode) {
+                                servoHTML += `
+                                    <div class="servo-item">
+                                        <div class="servo-name">${servo.name}</div>
+                                        <div class="servo-angle">${servo.angle}°</div>
+                                        <input type="range" min="0" max="180" value="${servo.angle}" 
+                                               class="servo-slider" 
+                                               onchange="setServoAngle(${i}, this.value)"
+                                               oninput="document.querySelectorAll('.servo-angle')[${i}].textContent = this.value + '°'">
+                                    </div>
+                                `;
+                            } else {
+                                servoHTML += `
+                                    <div class="servo-item">
+                                        <div class="servo-name">${servo.name}</div>
+                                        <div class="servo-angle">${servo.angle}°</div>
+                                        <div class="servo-source">${servo.source}</div>
+                                    </div>
+                                `;
+                            }
                         }
                     });
                     document.getElementById('servoList').innerHTML = servoHTML || '<div class="servo-item">No servos enabled</div>';
@@ -2411,6 +2486,31 @@ void handleRoot() {
                     })
                     .catch(err => console.error('Reset failed:', err));
             }
+        }
+
+        function toggleTestMode() {
+            fetch('/api/testmode', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Test mode toggle:', data);
+                    updateStatus();
+                })
+                .catch(err => console.error('Test mode toggle failed:', err));
+        }
+
+        function setServoAngle(servoIndex, angle) {
+            fetch('/api/servo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ servo: servoIndex, angle: parseInt(angle) })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status !== 'success') {
+                    console.error('Servo control error:', data.message);
+                }
+            })
+            .catch(err => console.error('Servo control failed:', err));
         }
 
         // Update status every 1 second
@@ -2507,6 +2607,65 @@ void handleAPITest() {
     // Queue a servo test (don't block)
     server.send(200, "application/json", "{\"status\":\"test_queued\"}");
     // Note: Actual test would need to be non-blocking or queued
+}
+
+void handleAPITestMode() {
+    // Toggle test mode
+    if (system_state.current_mode == MODE_TEST) {
+        // Exit test mode, return to idle
+        switchMode(MODE_IDLE);
+        server.send(200, "application/json", "{\"status\":\"test_mode_disabled\"}");
+    } else {
+        // Enter test mode - center all servos first
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            if (SERVO_CONFIGS[i].enabled) {
+                setServoAngle(i, 90, "test_init");
+            }
+        }
+        switchMode(MODE_TEST);
+        server.send(200, "application/json", "{\"status\":\"test_mode_enabled\"}");
+    }
+}
+
+void handleAPISetServo() {
+    // Only allow servo control in test mode
+    if (system_state.current_mode != MODE_TEST) {
+        server.send(403, "application/json", "{\"status\":\"error\",\"message\":\"Only available in test mode\"}");
+        return;
+    }
+
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No data\"}");
+        return;
+    }
+
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+
+    int servoIndex = doc["servo"].as<int>();
+    int angle = doc["angle"].as<int>();
+
+    // Validate inputs
+    if (servoIndex < 0 || servoIndex >= NUM_SERVOS) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid servo index\"}");
+        return;
+    }
+
+    if (!SERVO_CONFIGS[servoIndex].enabled) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Servo not enabled\"}");
+        return;
+    }
+
+    if (angle < 0 || angle > 180) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Angle must be 0-180\"}");
+        return;
+    }
+
+    // Set servo position
+    setServoAngle(servoIndex, angle, "web_test");
+
+    String response = "{\"status\":\"success\",\"servo\":" + String(servoIndex) + ",\"angle\":" + String(angle) + "}";
+    server.send(200, "application/json", response);
 }
 
 void handleAPIRestart() {
@@ -3056,6 +3215,8 @@ void setupWebServer() {
     server.on("/api/stop", HTTP_POST, handleAPIStop);
     server.on("/api/standalone", HTTP_POST, handleAPIStandalone);
     server.on("/api/test", HTTP_POST, handleAPITest);
+    server.on("/api/testmode", HTTP_POST, handleAPITestMode);
+    server.on("/api/servo", HTTP_POST, handleAPISetServo);
 
     // Settings API routes
     server.on("/api/settings", HTTP_GET, handleGetSettings);
