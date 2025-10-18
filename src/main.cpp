@@ -103,6 +103,12 @@ struct ServoState {
 ServoState servoStates[NUM_SERVOS];
 
 // ============================================
+// RESTART FLAG
+// ============================================
+bool pending_restart = false;
+unsigned long restart_time = 0;
+
+// ============================================
 // ANIMATION SEQUENCE
 // ============================================
 struct AnimationKeyframe {
@@ -129,6 +135,37 @@ struct Stats {
 };
 
 Stats stats = {0, 0, 0, 0, 0, false, false};
+
+// ============================================
+// RUNTIME SETTINGS
+// ============================================
+struct RuntimeSettings {
+    // Protocol enables
+    bool e131_enabled;
+    bool ddp_enabled;
+    bool mqtt_enabled;
+    bool standalone_enabled;
+
+    // MQTT settings
+    char mqtt_server[64];
+    int mqtt_port;
+    char mqtt_user[32];
+    char mqtt_password[64];
+
+    // WiFi settings (stored separately in preferences)
+    // Added here for display purposes
+};
+
+RuntimeSettings runtime_settings = {
+    true,   // e131_enabled
+    true,   // ddp_enabled
+    true,   // mqtt_enabled
+    false,  // standalone_enabled (disabled by default when no SD card)
+    "",     // mqtt_server
+    1883,   // mqtt_port
+    "",     // mqtt_user
+    ""      // mqtt_password
+};
 
 // ============================================
 // BUTTON/SENSOR STATE
@@ -207,25 +244,104 @@ void clearWiFiCredentials() {
     Serial.println("✓ WiFi credentials cleared!");
 }
 
+void loadSettings() {
+    preferences.begin("sleighvo", true);  // Read-only
+
+    // Load protocol enables (default to true unless explicitly disabled)
+    runtime_settings.e131_enabled = preferences.getBool("e131_en", true);
+    runtime_settings.ddp_enabled = preferences.getBool("ddp_en", DDP_ENABLED);
+    runtime_settings.mqtt_enabled = preferences.getBool("mqtt_en", MQTT_ENABLED);
+    runtime_settings.standalone_enabled = preferences.getBool("standalone_en", STANDALONE_MODE_ENABLED);
+
+    // Load MQTT settings
+    String mqtt_srv = preferences.getString("mqtt_srv", MQTT_SERVER);
+    mqtt_srv.toCharArray(runtime_settings.mqtt_server, sizeof(runtime_settings.mqtt_server));
+
+    runtime_settings.mqtt_port = preferences.getInt("mqtt_port", MQTT_PORT);
+
+    String mqtt_usr = preferences.getString("mqtt_usr", MQTT_USER);
+    mqtt_usr.toCharArray(runtime_settings.mqtt_user, sizeof(runtime_settings.mqtt_user));
+
+    String mqtt_pwd = preferences.getString("mqtt_pwd", MQTT_PASSWORD);
+    mqtt_pwd.toCharArray(runtime_settings.mqtt_password, sizeof(runtime_settings.mqtt_password));
+
+    preferences.end();
+
+    Serial.println("✓ Settings loaded from NVS");
+}
+
+void saveSettings() {
+    preferences.begin("sleighvo", false);  // Read-write
+
+    // Save protocol enables
+    preferences.putBool("e131_en", runtime_settings.e131_enabled);
+    preferences.putBool("ddp_en", runtime_settings.ddp_enabled);
+    preferences.putBool("mqtt_en", runtime_settings.mqtt_enabled);
+    preferences.putBool("standalone_en", runtime_settings.standalone_enabled);
+
+    // Save MQTT settings
+    preferences.putString("mqtt_srv", String(runtime_settings.mqtt_server));
+    preferences.putInt("mqtt_port", runtime_settings.mqtt_port);
+    preferences.putString("mqtt_usr", String(runtime_settings.mqtt_user));
+    preferences.putString("mqtt_pwd", String(runtime_settings.mqtt_password));
+
+    preferences.end();
+
+    Serial.println("✓ Settings saved to NVS");
+}
+
 void startConfigPortal() {
     Serial.println("\n=== Starting WiFi Configuration Portal ===");
 
     wifi_config_mode = true;
 
-    // Start AP mode
-    String apName = String(MQTT_CLIENT_ID) + "_Setup";
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(apName.c_str(), "sleighvo123");  // Default password
+    // Disconnect from any existing WiFi
+    WiFi.disconnect(true);
+    delay(100);
 
-    IPAddress IP = WiFi.softAPIP();
-    Serial.print("✓ AP Started: ");
-    Serial.println(apName);
-    Serial.print("✓ Password: sleighvo123");
-    Serial.println();
-    Serial.print("✓ Configuration URL: http://");
-    Serial.println(IP);
-    Serial.println("\nConnect to this WiFi network and navigate to the IP above");
-    Serial.println("to configure your WiFi settings.");
+    // Stop any existing AP
+    WiFi.softAPdisconnect(true);
+    delay(100);
+
+    // Set WiFi mode to AP
+    WiFi.mode(WIFI_AP);
+    delay(100);
+
+    // Start AP mode with explicit configuration
+    String apName = String(MQTT_CLIENT_ID) + "_Setup";
+
+    // Configure AP with explicit settings for better visibility
+    bool result = WiFi.softAP(
+        apName.c_str(),           // SSID
+        "sleighvo123",            // Password (8+ chars required)
+        1,                        // Channel (1 is usually clearest)
+        0,                        // SSID hidden (0=visible)
+        4                         // Max connections
+    );
+
+    delay(500);  // Give AP time to start
+
+    if (result) {
+        IPAddress IP = WiFi.softAPIP();
+        Serial.println("✓ AP Started Successfully!");
+        Serial.print("  SSID: ");
+        Serial.println(apName);
+        Serial.print("  Password: sleighvo123");
+        Serial.println();
+        Serial.print("  IP: ");
+        Serial.println(IP);
+        Serial.print("  Channel: 1");
+        Serial.println();
+        Serial.println("\n▶ Connect your phone/computer to the WiFi network above");
+        Serial.println("▶ Then navigate to http://");
+        Serial.print(IP);
+        Serial.println(" in your browser");
+    } else {
+        Serial.println("✗ AP failed to start!");
+        Serial.println("  Retrying in 2 seconds...");
+        delay(2000);
+        ESP.restart();
+    }
 }
 
 bool connectToWiFi(String ssid, String password) {
@@ -265,11 +381,25 @@ bool connectToWiFi(String ssid, String password) {
 void setupWiFi() {
     Serial.println("\n=== WiFi Setup ===");
 
+    // Check if button is held down on boot to force AP mode
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    delay(100);
+
+    if (digitalRead(BUTTON_PIN) == LOW) {
+        Serial.println("⚠ Button held on boot - forcing configuration mode");
+        Serial.println("  (Release button now)");
+        delay(2000);  // Wait for button release
+        startConfigPortal();
+        return;
+    }
+
     // Try to load saved credentials
     bool has_saved_creds = loadWiFiCredentials();
 
     if (has_saved_creds) {
-        Serial.println("Found saved WiFi credentials");
+        Serial.print("Found saved WiFi credentials for: ");
+        Serial.println(saved_ssid);
+
         if (connectToWiFi(saved_ssid, saved_password)) {
             wifi_config_mode = false;
             return;  // Successfully connected
@@ -1736,17 +1866,109 @@ void handleWiFiSave() {
 
     server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Credentials saved. Restarting...\"}");
 
-    // Restart after a short delay
-    delay(1000);
-    ESP.restart();
+    // Schedule restart to allow response to be sent
+    pending_restart = true;
+    restart_time = millis() + 2000;  // Restart in 2 seconds
+
+    Serial.println("\n✓ WiFi credentials saved, restart scheduled");
 }
 
 void handleWiFiReset() {
     clearWiFiCredentials();
     server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"WiFi reset. Restarting...\"}");
 
-    delay(1000);
-    ESP.restart();
+    // Schedule restart to allow response to be sent
+    pending_restart = true;
+    restart_time = millis() + 2000;  // Restart in 2 seconds
+
+    Serial.println("\n✓ WiFi credentials cleared, restart scheduled");
+}
+
+// ============================================
+// SETTINGS API HANDLERS
+// ============================================
+
+void handleGetSettings() {
+    JsonDocument doc;
+
+    // WiFi settings (read-only here - use WiFi save endpoint to change)
+    doc["wifi"]["ssid"] = saved_ssid;
+    doc["wifi"]["connected"] = (WiFi.status() == WL_CONNECTED);
+    doc["wifi"]["ip"] = WiFi.localIP().toString();
+    doc["wifi"]["rssi"] = WiFi.RSSI();
+
+    // Protocol enables
+    doc["protocols"]["e131"] = runtime_settings.e131_enabled;
+    doc["protocols"]["ddp"] = runtime_settings.ddp_enabled;
+    doc["protocols"]["mqtt"] = runtime_settings.mqtt_enabled;
+    doc["protocols"]["standalone"] = runtime_settings.standalone_enabled;
+
+    // MQTT settings
+    doc["mqtt"]["server"] = String(runtime_settings.mqtt_server);
+    doc["mqtt"]["port"] = runtime_settings.mqtt_port;
+    doc["mqtt"]["user"] = String(runtime_settings.mqtt_user);
+    doc["mqtt"]["connected"] = stats.mqtt_connected;
+
+    // Hardware info
+    doc["hardware"]["pca9685"] = PCA9685_ENABLED;
+    doc["hardware"]["sd_card"] = SD_ENABLED;
+    doc["hardware"]["servos"] = NUM_SERVOS;
+
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+}
+
+void handleSaveSettings() {
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No data\"}");
+        return;
+    }
+
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+
+    // Update protocol enables
+    if (doc.containsKey("protocols")) {
+        if (doc["protocols"].containsKey("e131")) {
+            runtime_settings.e131_enabled = doc["protocols"]["e131"].as<bool>();
+        }
+        if (doc["protocols"].containsKey("ddp")) {
+            runtime_settings.ddp_enabled = doc["protocols"]["ddp"].as<bool>();
+        }
+        if (doc["protocols"].containsKey("mqtt")) {
+            runtime_settings.mqtt_enabled = doc["protocols"]["mqtt"].as<bool>();
+        }
+        if (doc["protocols"].containsKey("standalone")) {
+            runtime_settings.standalone_enabled = doc["protocols"]["standalone"].as<bool>();
+        }
+    }
+
+    // Update MQTT settings
+    if (doc.containsKey("mqtt")) {
+        if (doc["mqtt"].containsKey("server")) {
+            String srv = doc["mqtt"]["server"].as<String>();
+            srv.toCharArray(runtime_settings.mqtt_server, sizeof(runtime_settings.mqtt_server));
+        }
+        if (doc["mqtt"].containsKey("port")) {
+            runtime_settings.mqtt_port = doc["mqtt"]["port"].as<int>();
+        }
+        if (doc["mqtt"].containsKey("user")) {
+            String usr = doc["mqtt"]["user"].as<String>();
+            usr.toCharArray(runtime_settings.mqtt_user, sizeof(runtime_settings.mqtt_user));
+        }
+        if (doc["mqtt"].containsKey("password")) {
+            String pwd = doc["mqtt"]["password"].as<String>();
+            pwd.toCharArray(runtime_settings.mqtt_password, sizeof(runtime_settings.mqtt_password));
+        }
+    }
+
+    // Save to NVS
+    saveSettings();
+
+    server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Settings saved. Restart required for some changes.\"}");
+
+    Serial.println("✓ Settings updated via API");
 }
 
 // ============================================
@@ -1793,6 +2015,27 @@ void handleRoot() {
         .header p {
             font-size: 1.1em;
             opacity: 0.9;
+        }
+        .nav-bar {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .nav-link {
+            padding: 10px 20px;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+        .nav-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
         .card {
             background: white;
@@ -1961,6 +2204,10 @@ void handleRoot() {
         <div class="header">
             <h1>🎄 SleighVo Control</h1>
             <p>ESP32 Animatronic Controller</p>
+        </div>
+
+        <div class="nav-bar">
+            <a href="/settings" class="nav-link">⚙️ Settings</a>
         </div>
 
         <div class="card">
@@ -2262,6 +2509,531 @@ void handleAPITest() {
     // Note: Actual test would need to be non-blocking or queued
 }
 
+void handleAPIRestart() {
+    server.send(200, "application/json", "{\"status\":\"restarting\",\"message\":\"Device will restart in 2 seconds\"}");
+    
+    Serial.println("\n🔄 Restart requested via web interface");
+    
+    // Schedule restart
+    pending_restart = true;
+    restart_time = millis() + 2000;  // Restart in 2 seconds
+}
+
+void handleSettingsPage() {
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SleighVo Settings</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+
+        .nav-button {
+            padding: 10px 20px;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            color: #667eea;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+
+        .nav-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .card h2 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #667eea;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"],
+        .form-group input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            margin: 0;
+            font-weight: 500;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .checkbox-description {
+            font-size: 0.9em;
+            color: #777;
+            margin-top: 5px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .status-message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .status-connected {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .status-disconnected {
+            color: #dc3545;
+            font-weight: 600;
+        }
+
+        @media (max-width: 600px) {
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .nav-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ SleighVo Settings</h1>
+            <p>Configure WiFi, MQTT, and Protocols</p>
+        </div>
+
+        <div class="nav-buttons">
+            <a href="/" class="nav-button">← Back to Control</a>
+            <button onclick="loadSettings()" class="nav-button">🔄 Refresh</button>
+        </div>
+
+        <div id="statusMessage" class="status-message"></div>
+
+        <!-- WiFi Status -->
+        <div class="card">
+            <h2>📡 WiFi Status</h2>
+            <div class="info-row">
+                <span class="info-label">SSID:</span>
+                <span class="info-value" id="wifiSsid">Loading...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Status:</span>
+                <span class="info-value" id="wifiStatus">Loading...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">IP Address:</span>
+                <span class="info-value" id="wifiIp">Loading...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Signal Strength:</span>
+                <span class="info-value" id="wifiRssi">Loading...</span>
+            </div>
+            <div class="button-group">
+                <button onclick="reconfigureWiFi()" class="btn btn-secondary">Change WiFi</button>
+            </div>
+        </div>
+
+        <!-- Protocol Enable/Disable -->
+        <div class="card">
+            <h2>🔌 Protocol Controls</h2>
+            <div class="checkbox-group">
+                <input type="checkbox" id="e131Enabled" onchange="markChanged()">
+                <label for="e131Enabled">
+                    E1.31 (sACN) Protocol
+                    <div class="checkbox-description">xLights lighting control protocol</div>
+                </label>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="ddpEnabled" onchange="markChanged()">
+                <label for="ddpEnabled">
+                    DDP Protocol
+                    <div class="checkbox-description">WLED/Pixel control protocol (port 4048)</div>
+                </label>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="mqttEnabled" onchange="markChanged()">
+                <label for="mqttEnabled">
+                    MQTT Protocol
+                    <div class="checkbox-description">Home Assistant integration</div>
+                </label>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="standaloneEnabled" onchange="markChanged()">
+                <label for="standaloneEnabled">
+                    Standalone Mode
+                    <div class="checkbox-description">Local audio and animation playback (requires SD card)</div>
+                </label>
+            </div>
+        </div>
+
+        <!-- MQTT Settings -->
+        <div class="card">
+            <h2>📨 MQTT Settings</h2>
+            <div class="info-row">
+                <span class="info-label">Connection:</span>
+                <span class="info-value" id="mqttStatus">Loading...</span>
+            </div>
+            <div class="form-group">
+                <label for="mqttServer">MQTT Server</label>
+                <input type="text" id="mqttServer" placeholder="homeassistant" onchange="markChanged()">
+            </div>
+            <div class="form-group">
+                <label for="mqttPort">MQTT Port</label>
+                <input type="number" id="mqttPort" placeholder="1883" onchange="markChanged()">
+            </div>
+            <div class="form-group">
+                <label for="mqttUser">MQTT Username</label>
+                <input type="text" id="mqttUser" placeholder="username" onchange="markChanged()">
+            </div>
+            <div class="form-group">
+                <label for="mqttPassword">MQTT Password</label>
+                <input type="password" id="mqttPassword" placeholder="password" onchange="markChanged()">
+            </div>
+        </div>
+
+        <!-- Hardware Info -->
+        <div class="card">
+            <h2>🔧 Hardware Information</h2>
+            <div class="info-row">
+                <span class="info-label">Servo Driver:</span>
+                <span class="info-value" id="hwServoDriver">Loading...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Number of Servos:</span>
+                <span class="info-value" id="hwServos">Loading...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">SD Card:</span>
+                <span class="info-value" id="hwSdCard">Loading...</span>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="card">
+            <h2>💾 Actions</h2>
+            <div class="button-group">
+                <button id="saveBtn" onclick="saveSettings()" class="btn btn-primary" disabled>
+                    Save Settings
+                </button>
+                <button onclick="restartDevice()" class="btn btn-danger">
+                    Restart Device
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let settingsChanged = false;
+
+        function markChanged() {
+            settingsChanged = true;
+            document.getElementById('saveBtn').disabled = false;
+            document.getElementById('saveBtn').textContent = 'Save Settings *';
+        }
+
+        function showMessage(message, isError = false) {
+            const msgDiv = document.getElementById('statusMessage');
+            msgDiv.textContent = message;
+            msgDiv.className = 'status-message ' + (isError ? 'status-error' : 'status-success');
+            msgDiv.style.display = 'block';
+            setTimeout(() => {
+                msgDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        async function loadSettings() {
+            try {
+                const response = await fetch('/api/settings');
+                const data = await response.json();
+
+                // WiFi info
+                document.getElementById('wifiSsid').textContent = data.wifi.ssid || 'Not configured';
+                document.getElementById('wifiStatus').textContent = data.wifi.connected ? 'Connected' : 'Disconnected';
+                document.getElementById('wifiStatus').className = 'info-value ' + (data.wifi.connected ? 'status-connected' : 'status-disconnected');
+                document.getElementById('wifiIp').textContent = data.wifi.ip || 'N/A';
+                document.getElementById('wifiRssi').textContent = data.wifi.rssi ? data.wifi.rssi + ' dBm' : 'N/A';
+
+                // Protocol enables
+                document.getElementById('e131Enabled').checked = data.protocols.e131;
+                document.getElementById('ddpEnabled').checked = data.protocols.ddp;
+                document.getElementById('mqttEnabled').checked = data.protocols.mqtt;
+                document.getElementById('standaloneEnabled').checked = data.protocols.standalone;
+
+                // MQTT settings
+                document.getElementById('mqttStatus').textContent = data.mqtt.connected ? 'Connected' : 'Disconnected';
+                document.getElementById('mqttStatus').className = 'info-value ' + (data.mqtt.connected ? 'status-connected' : 'status-disconnected');
+                document.getElementById('mqttServer').value = data.mqtt.server || '';
+                document.getElementById('mqttPort').value = data.mqtt.port || 1883;
+                document.getElementById('mqttUser').value = data.mqtt.user || '';
+                // Don't populate password for security
+
+                // Hardware info
+                document.getElementById('hwServoDriver').textContent = data.hardware.pca9685 ? 'PCA9685 (I2C)' : 'Direct GPIO';
+                document.getElementById('hwServos').textContent = data.hardware.servos;
+                document.getElementById('hwSdCard').textContent = data.hardware.sd_card ? 'Enabled' : 'Disabled';
+
+                settingsChanged = false;
+                document.getElementById('saveBtn').disabled = true;
+                document.getElementById('saveBtn').textContent = 'Save Settings';
+            } catch (error) {
+                showMessage('Error loading settings: ' + error.message, true);
+            }
+        }
+
+        async function saveSettings() {
+            const settings = {
+                protocols: {
+                    e131: document.getElementById('e131Enabled').checked,
+                    ddp: document.getElementById('ddpEnabled').checked,
+                    mqtt: document.getElementById('mqttEnabled').checked,
+                    standalone: document.getElementById('standaloneEnabled').checked
+                },
+                mqtt: {
+                    server: document.getElementById('mqttServer').value,
+                    port: parseInt(document.getElementById('mqttPort').value),
+                    user: document.getElementById('mqttUser').value
+                }
+            };
+
+            // Only include password if it was changed
+            const password = document.getElementById('mqttPassword').value;
+            if (password) {
+                settings.mqtt.password = password;
+            }
+
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage(result.message || 'Settings saved successfully!');
+                    settingsChanged = false;
+                    document.getElementById('saveBtn').disabled = true;
+                    document.getElementById('saveBtn').textContent = 'Save Settings';
+                    // Reload settings to reflect changes
+                    setTimeout(() => loadSettings(), 1000);
+                } else {
+                    showMessage(result.message || 'Error saving settings', true);
+                }
+            } catch (error) {
+                showMessage('Error saving settings: ' + error.message, true);
+            }
+        }
+
+        function reconfigureWiFi() {
+            if (confirm('This will reset WiFi and restart the device into configuration mode. Continue?')) {
+                fetch('/api/wifi/reset', { method: 'POST' })
+                    .then(() => {
+                        showMessage('Restarting into WiFi configuration mode...');
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 3000);
+                    })
+                    .catch(err => showMessage('Error: ' + err.message, true));
+            }
+        }
+
+        function restartDevice() {
+            if (confirm('Are you sure you want to restart the device?')) {
+                fetch('/api/restart', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        showMessage('Device is restarting... Please wait 10 seconds.');
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 10000);
+                    })
+                    .catch(err => showMessage('Error: ' + err.message, true));
+            }
+        }
+
+        // Load settings on page load
+        window.onload = loadSettings;
+    </script>
+</body>
+</html>
+)rawliteral";
+
+    server.send(200, "text/html", html);
+}
+
 void setupWebServer() {
     if (!ENABLE_WEB_SERVER) {
         Serial.println("\n=== Web Server DISABLED ===");
@@ -2284,6 +3056,12 @@ void setupWebServer() {
     server.on("/api/stop", HTTP_POST, handleAPIStop);
     server.on("/api/standalone", HTTP_POST, handleAPIStandalone);
     server.on("/api/test", HTTP_POST, handleAPITest);
+
+    // Settings API routes
+    server.on("/api/settings", HTTP_GET, handleGetSettings);
+    server.on("/api/settings", HTTP_POST, handleSaveSettings);
+    server.on("/settings", handleSettingsPage);
+    server.on("/api/restart", HTTP_POST, handleAPIRestart);
 
     // 404 handler
     server.onNotFound([]() {
@@ -2315,7 +3093,10 @@ void setup() {
     Serial.println("   ESP32 Servo Controller");
     Serial.println("   with Standalone Mode");
     Serial.println("=========================================");
-    
+
+    // Load runtime settings from NVS
+    loadSettings();
+
     setupWiFi();
     setupPCA9685();
 
@@ -2359,6 +3140,13 @@ void setup() {
 // ============================================
 
 void loop() {
+    // Check for pending restart
+    if (pending_restart && millis() >= restart_time) {
+        Serial.println("\n🔄 Restarting ESP32...");
+        delay(100);
+        ESP.restart();
+    }
+
     // Process E1.31
     processE131Packet();
 

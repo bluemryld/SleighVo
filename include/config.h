@@ -65,6 +65,13 @@
 #endif
 
 // ============================================
+// HARDWARE CONFIGURATION - Can override in config_local.h
+// ============================================
+#ifndef PCA9685_ENABLED
+#define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for direct GPIO control)
+#endif
+
+// ============================================
 // WIFI CONFIGURATION
 // ============================================
 // Static IP Configuration (optional)
@@ -112,7 +119,7 @@
 // ============================================
 // I2C CONFIGURATION (for PCA9685)
 // ============================================
-#define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for direct GPIO control)
+// Note: PCA9685_ENABLED is defined above (can be overridden in config_local.h)
 #define I2C_SDA 21                        // I2C SDA pin (default ESP32)
 #define I2C_SCL 22                        // I2C SCL pin (default ESP32)
 #define PCA9685_ADDRESS 0x40              // I2C address of PCA9685 board
@@ -145,7 +152,9 @@ const int SERVO_GPIO_PINS[NUM_SERVOS] = {
     32   // Servo 7: Spare 2          (GPIO 32)
 };
 
+#ifndef TEST_SERVOS_ON_STARTUP
 #define TEST_SERVOS_ON_STARTUP true       // Test all servos during startup (set false to skip)
+#endif
 
 // Servo names for debugging/display
 const char* SERVO_NAMES[] = {
@@ -184,7 +193,9 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // SD CARD CONFIGURATION
 // ============================================
+#ifndef SD_ENABLED
 #define SD_ENABLED true                   // Enable/disable SD card
+#endif
 #define SD_CS 5                           // SD card chip select pin
 #define SD_MOSI 23                        // SD card MOSI pin
 #define SD_MISO 19                        // SD card MISO pin
@@ -214,7 +225,9 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // STANDALONE MODE CONFIGURATION
 // ============================================
+#ifndef STANDALONE_MODE_ENABLED
 #define STANDALONE_MODE_ENABLED true      // Enable/disable standalone playback mode
+#endif
 
 // Default files for standalone mode (stored on SD card)
 #define DEFAULT_SONG_FILE "/songs/jingle_bells.mp3"
