@@ -21,6 +21,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <WebServer.h>
+#include <Preferences.h>
 #include <SD.h>
 #include <SPI.h>
 #include "AudioFileSourceSD.h"
@@ -43,6 +44,12 @@ ESPAsyncE131 e131(1);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 WebServer server(WEB_SERVER_PORT);
+Preferences preferences;
+
+// WiFi Configuration State
+bool wifi_config_mode = false;
+String saved_ssid = "";
+String saved_password = "";
 
 // Audio objects
 AudioGeneratorMP3 *mp3 = nullptr;
@@ -157,36 +164,116 @@ bool isE131Active();
 // SETUP FUNCTIONS
 // ============================================
 
-void setupWiFi() {
-    Serial.println("\n=== WiFi Setup ===");
-    Serial.print("Connecting to: ");
-    Serial.println(WIFI_SSID);
-    
+// ============================================
+// WIFI CONFIGURATION FUNCTIONS
+// ============================================
+
+bool loadWiFiCredentials() {
+    preferences.begin("sleighvo", true);  // Read-only mode
+    saved_ssid = preferences.getString("wifi_ssid", "");
+    saved_password = preferences.getString("wifi_pass", "");
+    preferences.end();
+
+    return (saved_ssid.length() > 0);
+}
+
+void saveWiFiCredentials(String ssid, String password) {
+    preferences.begin("sleighvo", false);  // Read-write mode
+    preferences.putString("wifi_ssid", ssid);
+    preferences.putString("wifi_pass", password);
+    preferences.end();
+
+    saved_ssid = ssid;
+    saved_password = password;
+
+    Serial.println("✓ WiFi credentials saved!");
+}
+
+void clearWiFiCredentials() {
+    preferences.begin("sleighvo", false);
+    preferences.clear();
+    preferences.end();
+
+    saved_ssid = "";
+    saved_password = "";
+
+    Serial.println("✓ WiFi credentials cleared!");
+}
+
+void startConfigPortal() {
+    Serial.println("\n=== Starting WiFi Configuration Portal ===");
+
+    wifi_config_mode = true;
+
+    // Start AP mode
+    String apName = String(MQTT_CLIENT_ID) + "_Setup";
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(apName.c_str(), "sleighvo123");  // Default password
+
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("✓ AP Started: ");
+    Serial.println(apName);
+    Serial.print("✓ Password: sleighvo123");
+    Serial.println();
+    Serial.print("✓ Configuration URL: http://");
+    Serial.println(IP);
+    Serial.println("\nConnect to this WiFi network and navigate to the IP above");
+    Serial.println("to configure your WiFi settings.");
+}
+
+bool connectToWiFi(String ssid, String password) {
+    Serial.println("\n=== Connecting to WiFi ===");
+    Serial.print("SSID: ");
+    Serial.println(ssid);
+
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(MQTT_CLIENT_ID);
-    
+
     #ifdef USE_STATIC_IP
     if (USE_STATIC_IP) {
         WiFi.config(STATIC_IP, GATEWAY, SUBNET, DNS);
     }
     #endif
-    
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    
+
+    WiFi.begin(ssid.c_str(), password.c_str());
+
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 30) {
         delay(500);
         Serial.print(".");
         attempts++;
     }
-    
+
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("\n✓ WiFi connected!");
         Serial.print("IP: ");
         Serial.println(WiFi.localIP());
+        return true;
     } else {
-        Serial.println("\n✗ WiFi failed!");
+        Serial.println("\n✗ WiFi connection failed!");
+        return false;
     }
+}
+
+void setupWiFi() {
+    Serial.println("\n=== WiFi Setup ===");
+
+    // Try to load saved credentials
+    bool has_saved_creds = loadWiFiCredentials();
+
+    if (has_saved_creds) {
+        Serial.println("Found saved WiFi credentials");
+        if (connectToWiFi(saved_ssid, saved_password)) {
+            wifi_config_mode = false;
+            return;  // Successfully connected
+        }
+        Serial.println("⚠ Saved credentials failed, starting config portal...");
+    } else {
+        Serial.println("No saved WiFi credentials found");
+    }
+
+    // No saved credentials or connection failed - start config portal
+    startConfigPortal();
 }
 
 bool checkI2CDevice(uint8_t address) {
@@ -1199,7 +1286,341 @@ const char* getModeName(SystemMode mode) {
     }
 }
 
+// ============================================
+// WIFI CONFIGURATION WEB HANDLERS
+// ============================================
+
+void handleConfigPortal() {
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SleighVo WiFi Setup</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            max-width: 500px;
+            width: 100%;
+        }
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        .network-list {
+            margin-bottom: 20px;
+        }
+        .network-item {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .network-item:hover {
+            border-color: #667eea;
+            background: #f8f9fa;
+        }
+        .network-item.selected {
+            border-color: #667eea;
+            background: #e7f3ff;
+        }
+        .signal {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .info {
+            background: #e7f3ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .info-text {
+            font-size: 0.9em;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎄 SleighVo</h1>
+            <p>WiFi Configuration</p>
+        </div>
+
+        <div class="card">
+            <h2>Connect to WiFi</h2>
+
+            <div class="info">
+                <div class="info-text">
+                    <strong>Setup Mode Active</strong><br>
+                    Configure your WiFi credentials to connect SleighVo to your network.
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Available Networks</label>
+                <button class="btn btn-secondary" onclick="scanNetworks()">🔄 Scan Networks</button>
+                <div id="networks" class="network-list" style="margin-top: 15px;">
+                    <div class="loading">Click "Scan Networks" to find WiFi networks</div>
+                </div>
+            </div>
+
+            <form id="wifiForm" onsubmit="saveWiFi(event)">
+                <div class="form-group">
+                    <label for="ssid">Network Name (SSID)</label>
+                    <input type="text" id="ssid" name="ssid" required placeholder="Enter network name">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required placeholder="Enter password">
+                </div>
+
+                <button type="submit" class="btn btn-primary">💾 Save & Connect</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let selectedNetwork = null;
+
+        function scanNetworks() {
+            document.getElementById('networks').innerHTML = '<div class="loading">Scanning... Please wait...</div>';
+
+            fetch('/config/scan')
+                .then(response => response.json())
+                .then(data => {
+                    let html = '';
+                    if (data.networks && data.networks.length > 0) {
+                        data.networks.forEach(network => {
+                            const signalIcon = network.rssi > -60 ? '📶' : network.rssi > -75 ? '📶' : '📡';
+                            const encryption = network.encryption !== 'open' ? '🔒' : '🔓';
+                            html += `
+                                <div class="network-item" onclick="selectNetwork('${network.ssid}')">
+                                    <div>
+                                        <strong>${encryption} ${network.ssid}</strong>
+                                    </div>
+                                    <div class="signal">${signalIcon} ${network.rssi} dBm</div>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        html = '<div class="loading">No networks found. Try scanning again.</div>';
+                    }
+                    document.getElementById('networks').innerHTML = html;
+                })
+                .catch(err => {
+                    console.error('Scan failed:', err);
+                    document.getElementById('networks').innerHTML = '<div class="loading">Scan failed. Please try again.</div>';
+                });
+        }
+
+        function selectNetwork(ssid) {
+            selectedNetwork = ssid;
+            document.getElementById('ssid').value = ssid;
+
+            // Update selected styling
+            document.querySelectorAll('.network-item').forEach(item => {
+                item.classList.remove('selected');
+                if (item.textContent.includes(ssid)) {
+                    item.classList.add('selected');
+                }
+            });
+        }
+
+        function saveWiFi(event) {
+            event.preventDefault();
+
+            const ssid = document.getElementById('ssid').value;
+            const password = document.getElementById('password').value;
+
+            fetch('/config/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ssid: ssid, password: password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('WiFi settings saved! The device will restart and connect to your network.\n\nPlease reconnect to your WiFi network and access the device at its new IP address.');
+                } else {
+                    alert('Error saving settings: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                console.error('Save failed:', err);
+                alert('Failed to save WiFi settings. Please try again.');
+            });
+        }
+
+        // Auto-scan on load
+        window.addEventListener('load', () => {
+            setTimeout(scanNetworks, 500);
+        });
+    </script>
+</body>
+</html>
+)rawliteral";
+
+    server.send(200, "text/html", html);
+}
+
+void handleWiFiScan() {
+    Serial.println("Scanning WiFi networks...");
+
+    int n = WiFi.scanNetworks();
+
+    JsonDocument doc;
+    JsonArray networks = doc["networks"].to<JsonArray>();
+
+    for (int i = 0; i < n && i < 20; i++) {  // Limit to 20 networks
+        JsonObject network = networks.add<JsonObject>();
+        network["ssid"] = WiFi.SSID(i);
+        network["rssi"] = WiFi.RSSI(i);
+        network["encryption"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "secure";
+    }
+
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+
+    Serial.print("Found ");
+    Serial.print(n);
+    Serial.println(" networks");
+}
+
+void handleWiFiSave() {
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No data\"}");
+        return;
+    }
+
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+
+    String ssid = doc["ssid"].as<String>();
+    String password = doc["password"].as<String>();
+
+    if (ssid.length() == 0) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"SSID required\"}");
+        return;
+    }
+
+    // Save credentials
+    saveWiFiCredentials(ssid, password);
+
+    server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Credentials saved. Restarting...\"}");
+
+    // Restart after a short delay
+    delay(1000);
+    ESP.restart();
+}
+
+void handleWiFiReset() {
+    clearWiFiCredentials();
+    server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"WiFi reset. Restarting...\"}");
+
+    delay(1000);
+    ESP.restart();
+}
+
+// ============================================
+// MAIN CONTROL WEB HANDLERS
+// ============================================
+
 void handleRoot() {
+    // If in config mode, redirect to config portal
+    if (wifi_config_mode) {
+        handleConfigPortal();
+        return;
+    }
+
     String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -1449,6 +1870,11 @@ void handleRoot() {
                     🎮 Test Servos
                 </button>
             </div>
+            <div class="control-group" style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #f0f0f0;">
+                <button class="btn btn-danger" onclick="resetWiFi()" style="background: #dc3545;">
+                    🔧 Reset WiFi Settings
+                </button>
+            </div>
         </div>
 
         <div class="card">
@@ -1579,6 +2005,17 @@ void handleRoot() {
                 .catch(err => console.error('Test failed:', err));
         }
 
+        function resetWiFi() {
+            if (confirm('Are you sure you want to reset WiFi settings?\n\nThe device will restart and enter setup mode.')) {
+                fetch('/api/wifi/reset', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        alert('WiFi settings reset! The device will restart in setup mode.\n\nConnect to the "sleighvo_Setup" WiFi network to reconfigure.');
+                    })
+                    .catch(err => console.error('Reset failed:', err));
+            }
+        }
+
         // Update status every 1 second
         setInterval(updateStatus, 1000);
 
@@ -1671,6 +2108,13 @@ void setupWebServer() {
 
     // Route handlers
     server.on("/", handleRoot);
+
+    // WiFi configuration routes
+    server.on("/config/scan", handleWiFiScan);
+    server.on("/config/save", HTTP_POST, handleWiFiSave);
+    server.on("/api/wifi/reset", HTTP_POST, handleWiFiReset);
+
+    // Main API routes
     server.on("/api/status", handleAPIStatus);
     server.on("/api/trigger", HTTP_POST, handleAPITrigger);
     server.on("/api/stop", HTTP_POST, handleAPIStop);

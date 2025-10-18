@@ -12,7 +12,8 @@
       "Bash(where pio:*)",
       "Bash(~/.platformio/penv/Scripts/platformio.exe run)",
       "Bash(git commit:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
