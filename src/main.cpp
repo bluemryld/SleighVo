@@ -15,6 +15,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <ESPAsyncE131.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
@@ -45,6 +46,11 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 WebServer server(WEB_SERVER_PORT);
 Preferences preferences;
+
+#if DDP_ENABLED
+WiFiUDP ddpUdp;
+unsigned long last_ddp_packet = 0;
+#endif
 
 // WiFi Configuration State
 bool wifi_config_mode = false;
@@ -113,7 +119,8 @@ size_t animation_keyframe_index = 0;
 // STATISTICS
 // ============================================
 struct Stats {
-    unsigned long packets_received;
+    unsigned long packets_received;      // E1.31 packets
+    unsigned long ddp_packets_received;  // DDP packets
     unsigned long standalone_triggers;
     unsigned long button_presses;
     unsigned long motion_detects;
@@ -121,7 +128,7 @@ struct Stats {
     bool sd_card_available;
 };
 
-Stats stats = {0, 0, 0, 0, false, false};
+Stats stats = {0, 0, 0, 0, 0, false, false};
 
 // ============================================
 // BUTTON/SENSOR STATE
@@ -442,6 +449,85 @@ void setupE131() {
         }
     }
 }
+
+// ============================================
+// DDP PROTOCOL FUNCTIONS
+// ============================================
+
+#if DDP_ENABLED
+
+void setupDDP() {
+    Serial.println("\n=== DDP Setup ===");
+
+    if (ddpUdp.begin(DDP_PORT)) {
+        Serial.print("✓ DDP listener started on port ");
+        Serial.println(DDP_PORT);
+        Serial.print("  Servos: ");
+        Serial.print(NUM_SERVOS);
+        Serial.print(" x ");
+        Serial.print(DDP_BYTES_PER_SERVO);
+        Serial.print(" bytes = ");
+        Serial.print(NUM_SERVOS * DDP_BYTES_PER_SERVO);
+        Serial.println(" bytes total");
+    } else {
+        Serial.println("✗ DDP failed to start");
+    }
+}
+
+bool isDDPActive() {
+    return (millis() - last_ddp_packet) < DDP_IDLE_TIMEOUT;
+}
+
+void processDDPPacket() {
+    int packetSize = ddpUdp.parsePacket();
+    if (packetSize < 10) return;  // Minimum DDP header is 10 bytes
+
+    uint8_t header[10];
+    ddpUdp.read(header, 10);
+
+    // Parse DDP header
+    // uint8_t flags = header[0];
+    // uint8_t sequence = header[1];
+    uint8_t dataType = header[2];
+    // uint8_t destID = header[3];
+    uint32_t dataOffset = (header[4] << 24) | (header[5] << 16) | (header[6] << 8) | header[7];
+    uint16_t dataLen = (header[8] << 8) | header[9];
+
+    // Only process RGB data (type 0x01)
+    if (dataType != 0x01) {
+        ddpUdp.flush();
+        return;
+    }
+
+    // Read pixel data
+    uint8_t pixelData[dataLen];
+    ddpUdp.read(pixelData, dataLen);
+
+    // Update timing
+    last_ddp_packet = millis();
+    stats.ddp_packets_received++;
+
+    // Map pixels to servos
+    // Each servo uses DDP_BYTES_PER_SERVO bytes (typically 3 for RGB)
+    // We use the first byte (R channel) as servo position (0-255)
+    uint32_t pixelOffset = dataOffset / DDP_BYTES_PER_SERVO;
+
+    for (uint16_t i = 0; i < dataLen && i < (NUM_SERVOS * DDP_BYTES_PER_SERVO); i += DDP_BYTES_PER_SERVO) {
+        uint32_t servoIndex = pixelOffset + (i / DDP_BYTES_PER_SERVO);
+
+        if (servoIndex < NUM_SERVOS && SERVO_CONFIGS[servoIndex].enabled) {
+            // Use first byte (R channel) as position value (0-255)
+            uint8_t position = pixelData[i];
+            // Map 0-255 to 0-180 degrees
+            uint8_t angle = map(position, 0, 255, 0, 180);
+            setServoAngle(servoIndex, angle, "ddp");
+        }
+    }
+
+    ddpUdp.flush();
+}
+
+#endif // DDP_ENABLED
 
 void setupSDCard() {
     if (!SD_ENABLED) return;
@@ -822,10 +908,16 @@ void switchMode(SystemMode newMode) {
 }
 
 void updateSystemMode() {
-    // E1.31 has highest priority
-    if (isE131Active()) {
+    // E1.31 and DDP have highest priority (network-based real-time control)
+    bool networkActive = isE131Active();
+
+#if DDP_ENABLED
+    networkActive = networkActive || isDDPActive();
+#endif
+
+    if (networkActive) {
         if (system_state.current_mode != MODE_E131) {
-            // E1.31 activated, stop any standalone playback
+            // Network control activated, stop any standalone playback
             if (system_state.current_mode == MODE_STANDALONE) {
                 stopStandalonePlayback();
             }
@@ -833,10 +925,10 @@ void updateSystemMode() {
         }
         return;
     }
-    
-    // E1.31 not active
+
+    // Network control not active
     if (system_state.current_mode == MODE_E131) {
-        // E1.31 just became inactive
+        // Network control just became inactive
         switchMode(MODE_IDLE);
         return;
     }
@@ -1836,6 +1928,10 @@ void handleRoot() {
                     <div class="status-value" id="e131">--</div>
                 </div>
                 <div class="status-item">
+                    <div class="status-label">DDP Active</div>
+                    <div class="status-value" id="ddp">--</div>
+                </div>
+                <div class="status-item">
                     <div class="status-label">Audio Playing</div>
                     <div class="status-value" id="audio">--</div>
                 </div>
@@ -1892,6 +1988,10 @@ void handleRoot() {
                     <div class="stat-label">E1.31 Packets</div>
                 </div>
                 <div class="stat-box">
+                    <div class="stat-value" id="stat-ddp">0</div>
+                    <div class="stat-label">DDP Packets</div>
+                </div>
+                <div class="stat-box">
                     <div class="stat-value" id="stat-triggers">0</div>
                     <div class="stat-label">Triggers</div>
                 </div>
@@ -1920,6 +2020,8 @@ void handleRoot() {
                     document.getElementById('mode').textContent = data.mode;
                     document.getElementById('e131').textContent = data.e131_active ? 'Active' : 'Inactive';
                     document.getElementById('e131').className = 'status-value ' + (data.e131_active ? 'active' : 'inactive');
+                    document.getElementById('ddp').textContent = data.ddp_active ? 'Active' : 'Inactive';
+                    document.getElementById('ddp').className = 'status-value ' + (data.ddp_active ? 'active' : 'inactive');
                     document.getElementById('audio').textContent = data.audio_playing ? 'Playing' : 'Stopped';
                     document.getElementById('audio').className = 'status-value ' + (data.audio_playing ? 'playing' : 'inactive');
                     document.getElementById('animation').textContent = data.animation_playing ? 'Running' : 'Stopped';
@@ -1929,6 +2031,7 @@ void handleRoot() {
 
                     // Statistics
                     document.getElementById('stat-e131').textContent = data.stats.e131_packets;
+                    document.getElementById('stat-ddp').textContent = data.stats.ddp_packets;
                     document.getElementById('stat-triggers').textContent = data.stats.standalone_triggers;
                     document.getElementById('stat-buttons').textContent = data.stats.button_presses;
                     document.getElementById('stat-motion').textContent = data.stats.motion_detects;
@@ -2035,6 +2138,13 @@ void handleAPIStatus() {
     // System info
     doc["mode"] = getModeName(system_state.current_mode);
     doc["e131_active"] = isE131Active();
+
+#if DDP_ENABLED
+    doc["ddp_active"] = isDDPActive();
+#else
+    doc["ddp_active"] = false;
+#endif
+
     doc["audio_playing"] = system_state.audio_playing;
     doc["animation_playing"] = system_state.animation_playing;
     doc["uptime"] = millis();
@@ -2045,6 +2155,13 @@ void handleAPIStatus() {
     // Statistics
     JsonObject stats_obj = doc.createNestedObject("stats");
     stats_obj["e131_packets"] = stats.packets_received;
+
+#if DDP_ENABLED
+    stats_obj["ddp_packets"] = stats.ddp_packets_received;
+#else
+    stats_obj["ddp_packets"] = 0;
+#endif
+
     stats_obj["standalone_triggers"] = stats.standalone_triggers;
     stats_obj["button_presses"] = stats.button_presses;
     stats_obj["motion_detects"] = stats.motion_detects;
@@ -2160,6 +2277,11 @@ void setup() {
     #endif
 
     setupE131();
+
+#if DDP_ENABLED
+    setupDDP();
+#endif
+
     setupSDCard();
     setupAudio();
     setupTriggers();
@@ -2167,12 +2289,16 @@ void setup() {
     setupWebServer();
 
     switchMode(MODE_IDLE);
-    
+
     Serial.println("\n=========================================");
     Serial.println("✓ System Ready!");
     Serial.println("=========================================");
-    Serial.println("Modes:");
-    Serial.println("  - E1.31: xLights show (priority)");
+    Serial.println("Network Control:");
+    Serial.println("  - E1.31 (sACN): xLights show");
+#if DDP_ENABLED
+    Serial.println("  - DDP: WLED/pixel control");
+#endif
+    Serial.println("\nModes:");
     Serial.println("  - Standalone: Local playback");
     Serial.println("  - Idle: Waiting for trigger");
     Serial.println("\nTriggers:");
@@ -2188,7 +2314,12 @@ void setup() {
 void loop() {
     // Process E1.31
     processE131Packet();
-    
+
+#if DDP_ENABLED
+    // Process DDP
+    processDDPPacket();
+#endif
+
     // Update system mode
     updateSystemMode();
     

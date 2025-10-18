@@ -96,6 +96,14 @@
 #define E131_IDLE_TIMEOUT 5000            // Time (ms) before considering E1.31 inactive
 
 // ============================================
+// DDP (Distributed Display Protocol) CONFIGURATION
+// ============================================
+#define DDP_ENABLED true                  // Enable/disable DDP protocol support
+#define DDP_PORT 4048                     // DDP UDP port (standard is 4048)
+#define DDP_IDLE_TIMEOUT 5000             // Time (ms) before considering DDP inactive
+#define DDP_BYTES_PER_SERVO 3             // RGB bytes per servo (use R channel for position)
+
+// ============================================
 // WEB SERVER CONFIGURATION
 // ============================================
 #define ENABLE_WEB_SERVER true            // Enable/disable web interface
