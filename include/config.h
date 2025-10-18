@@ -189,8 +189,8 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // TRIGGER INPUT PINS
 // ============================================
-#define BUTTON_PIN 32                     // Physical button input (active LOW with pullup)
-#define PIR_SENSOR_PIN 33                 // PIR motion sensor input (active HIGH)
+#define BUTTON_PIN 34                     // Physical button input (active LOW with pullup) - changed from 32 to avoid GPIO servo conflict
+#define PIR_SENSOR_PIN 35                 // PIR motion sensor input (active HIGH) - changed from 33 to avoid GPIO servo conflict
 #define BUTTON_LED_PIN 2                  // LED indicator (built-in LED on most ESP32)
 
 // Button timing
@@ -212,7 +212,7 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // IDLE MODE CONFIGURATION
 // ============================================
-#define IDLE_ANIMATION_ENABLED true       // Enable/disable idle animations
+#define IDLE_ANIMATION_ENABLED false      // Enable/disable idle animations (disabled by default to avoid servo issues)
 #define IDLE_ANIMATION_INTERVAL 5000      // Time between idle movements (ms)
 
 // ============================================
