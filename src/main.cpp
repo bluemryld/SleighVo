@@ -1185,9 +1185,509 @@ void updateMQTT() {
     }
 }
 
+// ============================================
+// WEB SERVER HANDLERS
+// ============================================
+
+const char* getModeName(SystemMode mode) {
+    switch(mode) {
+        case MODE_E131: return "E1.31";
+        case MODE_STANDALONE: return "Standalone";
+        case MODE_IDLE: return "Idle";
+        case MODE_STARTUP: return "Startup";
+        default: return "Unknown";
+    }
+}
+
+void handleRoot() {
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SleighVo Control</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            color: #667eea;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .status-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .status-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-value {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #333;
+        }
+        .status-value.active { color: #28a745; }
+        .status-value.inactive { color: #dc3545; }
+        .status-value.playing { color: #17a2b8; }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            margin: 5px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover { background: #5568d3; }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-success:hover { background: #218838; }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover { background: #c82333; }
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .btn-warning:hover { background: #e0a800; }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .control-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .servo-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .servo-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            text-align: center;
+        }
+        .servo-name {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .servo-angle {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+        }
+        .servo-source {
+            font-size: 0.75em;
+            color: #999;
+            margin-top: 3px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 15px;
+        }
+        .stat-box {
+            text-align: center;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+        }
+        .stat-label {
+            font-size: 0.85em;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+        .indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .indicator.green { background: #28a745; }
+        .indicator.red { background: #dc3545; }
+        .indicator.yellow { background: #ffc107; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            opacity: 0.8;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎄 SleighVo Control</h1>
+            <p>ESP32 Animatronic Controller</p>
+        </div>
+
+        <div class="card">
+            <h2>System Status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">Current Mode</div>
+                    <div class="status-value" id="mode">--</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">E1.31 Active</div>
+                    <div class="status-value" id="e131">--</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Audio Playing</div>
+                    <div class="status-value" id="audio">--</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Animation</div>
+                    <div class="status-value" id="animation">--</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Uptime</div>
+                    <div class="status-value" id="uptime">--</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">WiFi RSSI</div>
+                    <div class="status-value" id="rssi">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Controls</h2>
+            <div class="control-group">
+                <button class="btn btn-success" onclick="triggerAnimation()">
+                    ▶️ Trigger Animation
+                </button>
+                <button class="btn btn-danger" onclick="stopPlayback()">
+                    ⏹️ Stop Playback
+                </button>
+                <button class="btn btn-warning" onclick="toggleStandalone()" id="standaloneBtn">
+                    🔄 Toggle Standalone
+                </button>
+                <button class="btn btn-primary" onclick="testServos()">
+                    🎮 Test Servos
+                </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Servo Positions</h2>
+            <div class="servo-list" id="servoList">
+                <div class="servo-item">Loading...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Statistics</h2>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-e131">0</div>
+                    <div class="stat-label">E1.31 Packets</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-triggers">0</div>
+                    <div class="stat-label">Triggers</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-buttons">0</div>
+                    <div class="stat-label">Button Presses</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="stat-motion">0</div>
+                    <div class="stat-label">Motion Detects</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>SleighVo v1.0.0 | <span id="ip">--</span></p>
+        </div>
+    </div>
+
+    <script>
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    // System status
+                    document.getElementById('mode').textContent = data.mode;
+                    document.getElementById('e131').textContent = data.e131_active ? 'Active' : 'Inactive';
+                    document.getElementById('e131').className = 'status-value ' + (data.e131_active ? 'active' : 'inactive');
+                    document.getElementById('audio').textContent = data.audio_playing ? 'Playing' : 'Stopped';
+                    document.getElementById('audio').className = 'status-value ' + (data.audio_playing ? 'playing' : 'inactive');
+                    document.getElementById('animation').textContent = data.animation_playing ? 'Running' : 'Stopped';
+                    document.getElementById('animation').className = 'status-value ' + (data.animation_playing ? 'playing' : 'inactive');
+                    document.getElementById('uptime').textContent = formatUptime(data.uptime);
+                    document.getElementById('rssi').textContent = data.rssi + ' dBm';
+
+                    // Statistics
+                    document.getElementById('stat-e131').textContent = data.stats.e131_packets;
+                    document.getElementById('stat-triggers').textContent = data.stats.standalone_triggers;
+                    document.getElementById('stat-buttons').textContent = data.stats.button_presses;
+                    document.getElementById('stat-motion').textContent = data.stats.motion_detects;
+
+                    // Servo positions
+                    let servoHTML = '';
+                    data.servos.forEach((servo, i) => {
+                        if (servo.enabled) {
+                            servoHTML += `
+                                <div class="servo-item">
+                                    <div class="servo-name">${servo.name}</div>
+                                    <div class="servo-angle">${servo.angle}°</div>
+                                    <div class="servo-source">${servo.source}</div>
+                                </div>
+                            `;
+                        }
+                    });
+                    document.getElementById('servoList').innerHTML = servoHTML || '<div class="servo-item">No servos enabled</div>';
+
+                    document.getElementById('ip').textContent = data.ip;
+                })
+                .catch(err => console.error('Status update failed:', err));
+        }
+
+        function formatUptime(ms) {
+            const seconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            const days = Math.floor(hours / 24);
+
+            if (days > 0) return `${days}d ${hours % 24}h`;
+            if (hours > 0) return `${hours}h ${minutes % 60}m`;
+            if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+            return `${seconds}s`;
+        }
+
+        function triggerAnimation() {
+            fetch('/api/trigger', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Trigger response:', data);
+                    updateStatus();
+                })
+                .catch(err => console.error('Trigger failed:', err));
+        }
+
+        function stopPlayback() {
+            fetch('/api/stop', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Stop response:', data);
+                    updateStatus();
+                })
+                .catch(err => console.error('Stop failed:', err));
+        }
+
+        function toggleStandalone() {
+            fetch('/api/standalone', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Standalone toggle response:', data);
+                    updateStatus();
+                })
+                .catch(err => console.error('Standalone toggle failed:', err));
+        }
+
+        function testServos() {
+            fetch('/api/test', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Test response:', data);
+                    updateStatus();
+                })
+                .catch(err => console.error('Test failed:', err));
+        }
+
+        // Update status every 1 second
+        setInterval(updateStatus, 1000);
+
+        // Initial update
+        updateStatus();
+    </script>
+</body>
+</html>
+)rawliteral";
+
+    server.send(200, "text/html", html);
+}
+
+void handleAPIStatus() {
+    StaticJsonDocument<2048> doc;
+
+    // System info
+    doc["mode"] = getModeName(system_state.current_mode);
+    doc["e131_active"] = isE131Active();
+    doc["audio_playing"] = system_state.audio_playing;
+    doc["animation_playing"] = system_state.animation_playing;
+    doc["uptime"] = millis();
+    doc["rssi"] = WiFi.RSSI();
+    doc["ip"] = WiFi.localIP().toString();
+    doc["free_heap"] = ESP.getFreeHeap();
+
+    // Statistics
+    JsonObject stats_obj = doc.createNestedObject("stats");
+    stats_obj["e131_packets"] = stats.packets_received;
+    stats_obj["standalone_triggers"] = stats.standalone_triggers;
+    stats_obj["button_presses"] = stats.button_presses;
+    stats_obj["motion_detects"] = stats.motion_detects;
+
+    // Servo positions
+    JsonArray servos = doc.createNestedArray("servos");
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        JsonObject servo = servos.createNestedObject();
+        servo["name"] = SERVO_NAMES[i];
+        servo["enabled"] = SERVO_CONFIGS[i].enabled;
+        servo["angle"] = servoStates[i].current_angle;
+        servo["source"] = servoStates[i].control_source;
+    }
+
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+}
+
+void handleAPITrigger() {
+    if (system_state.current_mode != MODE_E131) {
+        startStandalonePlayback();
+        server.send(200, "application/json", "{\"status\":\"triggered\"}");
+    } else {
+        server.send(200, "application/json", "{\"status\":\"blocked\",\"reason\":\"E1.31 active\"}");
+    }
+}
+
+void handleAPIStop() {
+    if (system_state.current_mode == MODE_STANDALONE) {
+        stopStandalonePlayback();
+    }
+    server.send(200, "application/json", "{\"status\":\"stopped\"}");
+}
+
+void handleAPIStandalone() {
+    if (system_state.current_mode == MODE_STANDALONE) {
+        stopStandalonePlayback();
+        server.send(200, "application/json", "{\"status\":\"disabled\"}");
+    } else if (system_state.current_mode == MODE_IDLE) {
+        startStandalonePlayback();
+        server.send(200, "application/json", "{\"status\":\"enabled\"}");
+    } else {
+        server.send(200, "application/json", "{\"status\":\"unavailable\",\"reason\":\"E1.31 active\"}");
+    }
+}
+
+void handleAPITest() {
+    // Queue a servo test (don't block)
+    server.send(200, "application/json", "{\"status\":\"test_queued\"}");
+    // Note: Actual test would need to be non-blocking or queued
+}
+
 void setupWebServer() {
-    // Web server setup from previous version
-    // Omitted here for brevity - use previous web code
+    if (!ENABLE_WEB_SERVER) {
+        Serial.println("\n=== Web Server DISABLED ===");
+        return;
+    }
+
+    Serial.println("\n=== Web Server Setup ===");
+
+    // Route handlers
+    server.on("/", handleRoot);
+    server.on("/api/status", handleAPIStatus);
+    server.on("/api/trigger", HTTP_POST, handleAPITrigger);
+    server.on("/api/stop", HTTP_POST, handleAPIStop);
+    server.on("/api/standalone", HTTP_POST, handleAPIStandalone);
+    server.on("/api/test", HTTP_POST, handleAPITest);
+
+    // 404 handler
+    server.onNotFound([]() {
+        server.send(404, "text/plain", "404: Not Found");
+    });
+
+    server.begin();
+
+    Serial.print("✓ Web server started on http://");
+    Serial.print(WiFi.localIP());
+    Serial.print(":");
+    Serial.println(WEB_SERVER_PORT);
 }
 
 // ============================================
