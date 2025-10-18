@@ -104,6 +104,7 @@
 // ============================================
 // I2C CONFIGURATION (for PCA9685)
 // ============================================
+#define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for testing without hardware)
 #define I2C_SDA 21                        // I2C SDA pin (default ESP32)
 #define I2C_SCL 22                        // I2C SCL pin (default ESP32)
 #define PCA9685_ADDRESS 0x40              // I2C address of PCA9685 board

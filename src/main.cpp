@@ -36,7 +36,9 @@
 // ============================================
 // GLOBAL OBJECTS
 // ============================================
+#if PCA9685_ENABLED
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDRESS);
+#endif
 ESPAsyncE131 e131(1);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -230,6 +232,25 @@ void scanI2CBus() {
 void setupPCA9685() {
     Serial.println("\n=== PCA9685 Setup ===");
 
+#if !PCA9685_ENABLED
+    Serial.println("⚠ PCA9685 DISABLED in config.h - running in simulation mode");
+    Serial.println("✓ Servo commands will be logged but not executed");
+
+    // Initialize servo states for simulation
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        if (SERVO_CONFIGS[i].enabled) {
+            servoStates[i].current_angle = 90;
+            servoStates[i].initialized = true;
+            Serial.print("Servo ");
+            Serial.print(i);
+            Serial.print(" (");
+            Serial.print(SERVO_NAMES[i]);
+            Serial.println(") - simulation mode ready");
+        }
+    }
+    return;
+#endif
+
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(100000);  // 100kHz I2C speed (standard mode)
     delay(100);
@@ -247,9 +268,11 @@ void setupPCA9685() {
 
     Serial.println("✓ PCA9685 detected");
 
+#if PCA9685_ENABLED
     pwm.begin();
     pwm.setPWMFreq(SERVO_FREQ);
     delay(100);
+#endif
 
     // Initialize all servos to center
     for (int i = 0; i < NUM_SERVOS; i++) {
@@ -435,9 +458,26 @@ void setServoAngle(int servoIndex, uint8_t angle, const char* source) {
     
     // Apply trim
     pulse = constrain(pulse + SERVO_CONFIGS[servoIndex].trim, SERVOMIN, SERVOMAX);
-    
+
     // Update servo
+#if PCA9685_ENABLED
     pwm.setPWM(servoIndex, 0, pulse);
+#else
+    // Simulation mode - log servo commands
+    if (DEBUG_ENABLED) {
+        Serial.print("[SIM] Servo ");
+        Serial.print(servoIndex);
+        Serial.print(" (");
+        Serial.print(SERVO_NAMES[servoIndex]);
+        Serial.print("): ");
+        Serial.print(angle);
+        Serial.print("° [pulse=");
+        Serial.print(pulse);
+        Serial.print(", source=");
+        Serial.print(source);
+        Serial.println("]");
+    }
+#endif
     servoStates[servoIndex].current_position = pulse;
     servoStates[servoIndex].current_angle = angle;
     servoStates[servoIndex].control_source = source;
