@@ -2307,11 +2307,6 @@ void handleRoot() {
                     🔬 Test Mode
                 </button>
             </div>
-            <div class="control-group" style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #f0f0f0;">
-                <button class="btn btn-danger" onclick="resetWiFi()" style="background: #dc3545;">
-                    🔧 Reset WiFi Settings
-                </button>
-            </div>
         </div>
 
         <div class="card">
@@ -2475,17 +2470,6 @@ void handleRoot() {
                     updateStatus();
                 })
                 .catch(err => console.error('Test failed:', err));
-        }
-
-        function resetWiFi() {
-            if (confirm('Are you sure you want to reset WiFi settings?\n\nThe device will restart and enter setup mode.')) {
-                fetch('/api/wifi/reset', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        alert('WiFi settings reset! The device will restart in setup mode.\n\nConnect to the "sleighvo_Setup" WiFi network to reconfigure.');
-                    })
-                    .catch(err => console.error('Reset failed:', err));
-            }
         }
 
         function toggleTestMode() {
@@ -2960,7 +2944,7 @@ void handleSettingsPage() {
                 <span class="info-value" id="wifiRssi">Loading...</span>
             </div>
             <div class="button-group">
-                <button onclick="reconfigureWiFi()" class="btn btn-secondary">Change WiFi</button>
+                <button onclick="reconfigureWiFi()" class="btn btn-danger">🔧 Reset WiFi Settings</button>
             </div>
         </div>
 
