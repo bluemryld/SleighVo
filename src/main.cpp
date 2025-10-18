@@ -324,24 +324,44 @@ void scanI2CBus() {
 }
 
 void setupPCA9685() {
-    Serial.println("\n=== PCA9685 Setup ===");
+    Serial.println("\n=== Servo Setup ===");
 
 #if !PCA9685_ENABLED
-    Serial.println("⚠ PCA9685 DISABLED in config.h - running in simulation mode");
-    Serial.println("✓ Servo commands will be logged but not executed");
+    Serial.println("⚠ PCA9685 DISABLED - Using direct GPIO control with ESP32 LEDC");
 
-    // Initialize servo states for simulation
+    // Setup LEDC timer for servo control
+    // Timer 0, 50Hz frequency, SERVO_PWM_RESOLUTION bit resolution
+    ledcSetup(0, SERVO_FREQ, SERVO_PWM_RESOLUTION);
+
+    Serial.print("✓ LEDC Timer configured: ");
+    Serial.print(SERVO_FREQ);
+    Serial.print(" Hz, ");
+    Serial.print(SERVO_PWM_RESOLUTION);
+    Serial.println(" bit resolution");
+
+    // Initialize each servo with LEDC
     for (int i = 0; i < NUM_SERVOS; i++) {
         if (SERVO_CONFIGS[i].enabled) {
+            // Attach LEDC channel to GPIO pin
+            ledcAttachPin(SERVO_GPIO_PINS[i], i);  // Channel number = servo index
+
             servoStates[i].current_angle = 90;
             servoStates[i].initialized = true;
+
+            // Set to center position
+            setServoAngle(i, 90, "startup");
+
             Serial.print("Servo ");
             Serial.print(i);
             Serial.print(" (");
             Serial.print(SERVO_NAMES[i]);
-            Serial.println(") - simulation mode ready");
+            Serial.print(") on GPIO ");
+            Serial.print(SERVO_GPIO_PINS[i]);
+            Serial.print(" → LEDC channel ");
+            Serial.println(i);
         }
     }
+    Serial.println("✓ Direct GPIO servos initialized");
     return;
 #endif
 
@@ -614,10 +634,11 @@ void setupTriggers() {
 void setServoAngle(int servoIndex, uint8_t angle, const char* source) {
     if (servoIndex < 0 || servoIndex >= NUM_SERVOS) return;
     if (!SERVO_CONFIGS[servoIndex].enabled) return;
-    
+
     angle = constrain(angle, 0, 180);
-    
-    // Map angle to pulse width
+
+#if PCA9685_ENABLED
+    // PCA9685 mode - use pulse values
     uint16_t pulse;
     if (SERVO_CONFIGS[servoIndex].reverse) {
         pulse = map(180 - angle, 0, 180,
@@ -628,30 +649,56 @@ void setServoAngle(int servoIndex, uint8_t angle, const char* source) {
                    SERVO_CONFIGS[servoIndex].min_pulse,
                    SERVO_CONFIGS[servoIndex].max_pulse);
     }
-    
+
     // Apply trim
     pulse = constrain(pulse + SERVO_CONFIGS[servoIndex].trim, SERVOMIN, SERVOMAX);
 
-    // Update servo
-#if PCA9685_ENABLED
+    // Write to PCA9685
     pwm.setPWM(servoIndex, 0, pulse);
+
+    servoStates[servoIndex].current_position = pulse;
 #else
-    // Simulation mode - log servo commands
+    // Direct GPIO mode - use LEDC PWM
+    uint8_t actualAngle = angle;
+
+    // Apply reverse
+    if (SERVO_CONFIGS[servoIndex].reverse) {
+        actualAngle = 180 - angle;
+    }
+
+    // Calculate pulse width in microseconds
+    uint16_t pulse_us = map(actualAngle, 0, 180, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+
+    // Apply trim (treat as microseconds adjustment)
+    pulse_us = constrain(pulse_us + SERVO_CONFIGS[servoIndex].trim, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+
+    // Convert to duty cycle
+    // Period = 1/50Hz = 20,000 microseconds
+    // Duty = (pulse_us / 20000) * (2^resolution - 1)
+    uint32_t duty = (pulse_us * ((1 << SERVO_PWM_RESOLUTION) - 1)) / 20000;
+
+    // Write to LEDC channel (channel number = servo index)
+    ledcWrite(servoIndex, duty);
+
+    servoStates[servoIndex].current_position = pulse_us;
+
     if (DEBUG_ENABLED) {
-        Serial.print("[SIM] Servo ");
+        Serial.print("[GPIO] Servo ");
         Serial.print(servoIndex);
         Serial.print(" (");
         Serial.print(SERVO_NAMES[servoIndex]);
         Serial.print("): ");
         Serial.print(angle);
-        Serial.print("° [pulse=");
-        Serial.print(pulse);
+        Serial.print("° → ");
+        Serial.print(pulse_us);
+        Serial.print("µs [duty=");
+        Serial.print(duty);
         Serial.print(", source=");
         Serial.print(source);
         Serial.println("]");
     }
 #endif
-    servoStates[servoIndex].current_position = pulse;
+
     servoStates[servoIndex].current_angle = angle;
     servoStates[servoIndex].control_source = source;
     servoStates[servoIndex].last_update = millis();

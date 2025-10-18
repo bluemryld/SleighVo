@@ -112,7 +112,7 @@
 // ============================================
 // I2C CONFIGURATION (for PCA9685)
 // ============================================
-#define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for testing without hardware)
+#define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for direct GPIO control)
 #define I2C_SDA 21                        // I2C SDA pin (default ESP32)
 #define I2C_SCL 22                        // I2C SCL pin (default ESP32)
 #define PCA9685_ADDRESS 0x40              // I2C address of PCA9685 board
@@ -122,8 +122,29 @@
 // ============================================
 #define NUM_SERVOS 8                      // Total number of servos
 #define SERVO_FREQ 50                     // Servo PWM frequency (Hz) - standard is 50Hz
+
+// PCA9685 pulse lengths (when using PCA9685)
 #define SERVOMIN 150                      // Minimum pulse length (out of 4096)
 #define SERVOMAX 600                      // Maximum pulse length (out of 4096)
+
+// Direct GPIO servo pulse widths in microseconds (when PCA9685_ENABLED = false)
+#define SERVO_MIN_PULSE_US 500            // Minimum pulse width (µs) - typically 500-1000
+#define SERVO_MAX_PULSE_US 2500           // Maximum pulse width (µs) - typically 2000-2500
+#define SERVO_PWM_RESOLUTION 16           // PWM resolution in bits (1-16)
+
+// Direct GPIO pin assignments for servos (only used when PCA9685_ENABLED = false)
+// Connect servos directly to these ESP32 GPIO pins
+const int SERVO_GPIO_PINS[NUM_SERVOS] = {
+    13,  // Servo 0: Reindeer Head    (GPIO 13)
+    12,  // Servo 1: Reindeer Front   (GPIO 12)
+    14,  // Servo 2: Reindeer Rear    (GPIO 14)
+    27,  // Servo 3: Sleigh Tilt      (GPIO 27)
+    26,  // Servo 4: Santa Wave       (GPIO 26)
+    25,  // Servo 5: Santa Nod        (GPIO 25)
+    33,  // Servo 6: Spare 1          (GPIO 33)
+    32   // Servo 7: Spare 2          (GPIO 32)
+};
+
 #define TEST_SERVOS_ON_STARTUP true       // Test all servos during startup (set false to skip)
 
 // Servo names for debugging/display
