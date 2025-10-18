@@ -44,7 +44,7 @@
 
 #define WIFI_SSID ""                      // Configured via web portal
 #define WIFI_PASSWORD ""                  // Configured via web portal
-#define MQTT_SERVER ""                    // Configured via settings page
+#define MQTT_SERVER "192.168.1.100"       // Placeholder - configure via settings page
 #define MQTT_USER ""                      // Configured via settings page
 #define MQTT_PASSWORD ""                  // Configured via settings page
 
@@ -66,7 +66,7 @@
 // ============================================
 // MQTT CONFIGURATION
 // ============================================
-#define MQTT_ENABLED true                 // Enable/disable MQTT integration
+#define MQTT_ENABLED false                // Enable/disable MQTT integration (disabled by default, enable via settings page)
 #define MQTT_PORT 1883                    // MQTT broker port
 #define MQTT_CLIENT_ID "sleighvo"         // Unique client ID for MQTT
 
@@ -87,7 +87,7 @@
 // ============================================
 // DDP (Distributed Display Protocol) CONFIGURATION
 // ============================================
-#define DDP_ENABLED true                  // Enable/disable DDP protocol support
+#define DDP_ENABLED false                 // Enable/disable DDP protocol support (disabled by default, enable via settings page)
 #define DDP_PORT 4048                     // DDP UDP port (standard is 4048)
 #define DDP_IDLE_TIMEOUT 5000             // Time (ms) before considering DDP inactive
 #define DDP_BYTES_PER_SERVO 3             // RGB bytes per servo (use R channel for position)
@@ -134,7 +134,7 @@ const int SERVO_GPIO_PINS[NUM_SERVOS] = {
     32   // Servo 7: Spare 2          (GPIO 32)
 };
 
-#define TEST_SERVOS_ON_STARTUP true       // Test all servos during startup (set false to skip)
+#define TEST_SERVOS_ON_STARTUP false      // Test all servos during startup (disabled by default to avoid issues)
 
 // Servo names for debugging/display
 const char* SERVO_NAMES[] = {
@@ -173,7 +173,7 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // SD CARD CONFIGURATION
 // ============================================
-#define SD_ENABLED true                   // Enable/disable SD card
+#define SD_ENABLED false                  // Enable/disable SD card (disabled by default, enable if SD card is present)
 #define SD_CS 5                           // SD card chip select pin
 #define SD_MOSI 23                        // SD card MOSI pin
 #define SD_MISO 19                        // SD card MISO pin
@@ -203,7 +203,7 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // STANDALONE MODE CONFIGURATION
 // ============================================
-#define STANDALONE_MODE_ENABLED true      // Enable/disable standalone playback mode
+#define STANDALONE_MODE_ENABLED false     // Enable/disable standalone playback mode (requires SD card)
 
 // Default files for standalone mode (stored on SD card)
 #define DEFAULT_SONG_FILE "/songs/jingle_bells.mp3"
