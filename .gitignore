@@ -21,6 +21,8 @@
 *~
 .DS_Store
 
+# Local config (not used by code but prevent accidental credential commit)
+include/config_local.h
 
 # Temporary files
 *.tmp

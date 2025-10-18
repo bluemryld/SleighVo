@@ -51,7 +51,7 @@
 // ============================================
 // HARDWARE CONFIGURATION
 // ============================================
-#define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for direct GPIO control)
+#define PCA9685_ENABLED false              // Enable/disable PCA9685 servo driver (set false for direct GPIO control)
 
 // ============================================
 // WIFI CONFIGURATION
