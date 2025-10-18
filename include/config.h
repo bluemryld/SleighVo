@@ -36,40 +36,22 @@
 #define CONFIG_H
 
 // ============================================
-// CREDENTIALS - OVERRIDE IN config_local.h
+// DEFAULT CREDENTIALS
 // ============================================
-// Create 'config_local.h' with your actual WiFi/MQTT credentials
-// Use config_local.h.example as a template
-// config_local.h is git-ignored and won't be committed
+// These are placeholder values. WiFi and MQTT credentials are now
+// configured via the web interface and stored in NVS (non-volatile storage).
+// The web portal will start automatically if no WiFi credentials are found.
 
-// Default values (will be overridden by config_local.h if it exists)
-#ifndef WIFI_SSID
-#define WIFI_SSID "YourWiFiSSID"          // Change in config_local.h
-#endif
-#ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD "YourWiFiPassword"  // Change in config_local.h
-#endif
-#ifndef MQTT_SERVER
-#define MQTT_SERVER "192.168.1.10"        // Change in config_local.h
-#endif
-#ifndef MQTT_USER
-#define MQTT_USER "mqtt_user"             // Change in config_local.h
-#endif
-#ifndef MQTT_PASSWORD
-#define MQTT_PASSWORD "mqtt_password"     // Change in config_local.h
-#endif
-
-// Include local credentials override
-#if __has_include("config_local.h")
-#include "config_local.h"
-#endif
+#define WIFI_SSID ""                      // Configured via web portal
+#define WIFI_PASSWORD ""                  // Configured via web portal
+#define MQTT_SERVER ""                    // Configured via settings page
+#define MQTT_USER ""                      // Configured via settings page
+#define MQTT_PASSWORD ""                  // Configured via settings page
 
 // ============================================
-// HARDWARE CONFIGURATION - Can override in config_local.h
+// HARDWARE CONFIGURATION
 // ============================================
-#ifndef PCA9685_ENABLED
 #define PCA9685_ENABLED true              // Enable/disable PCA9685 servo driver (set false for direct GPIO control)
-#endif
 
 // ============================================
 // WIFI CONFIGURATION
@@ -152,9 +134,7 @@ const int SERVO_GPIO_PINS[NUM_SERVOS] = {
     32   // Servo 7: Spare 2          (GPIO 32)
 };
 
-#ifndef TEST_SERVOS_ON_STARTUP
 #define TEST_SERVOS_ON_STARTUP true       // Test all servos during startup (set false to skip)
-#endif
 
 // Servo names for debugging/display
 const char* SERVO_NAMES[] = {
@@ -193,9 +173,7 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // SD CARD CONFIGURATION
 // ============================================
-#ifndef SD_ENABLED
 #define SD_ENABLED true                   // Enable/disable SD card
-#endif
 #define SD_CS 5                           // SD card chip select pin
 #define SD_MOSI 23                        // SD card MOSI pin
 #define SD_MISO 19                        // SD card MISO pin
@@ -225,9 +203,7 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // ============================================
 // STANDALONE MODE CONFIGURATION
 // ============================================
-#ifndef STANDALONE_MODE_ENABLED
 #define STANDALONE_MODE_ENABLED true      // Enable/disable standalone playback mode
-#endif
 
 // Default files for standalone mode (stored on SD card)
 #define DEFAULT_SONG_FILE "/songs/jingle_bells.mp3"

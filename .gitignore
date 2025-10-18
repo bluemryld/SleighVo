@@ -21,8 +21,6 @@
 *~
 .DS_Store
 
-# Credentials (IMPORTANT: Never commit real credentials!)
-config_local.h
 
 # Temporary files
 *.tmp
