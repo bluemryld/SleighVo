@@ -155,19 +155,20 @@ struct ServoConfig {
     uint16_t max_pulse; // Maximum pulse width
     int16_t trim;       // Trim adjustment (-100 to +100)
     bool reverse;       // Reverse servo direction
+    char name[32];      // Servo name (runtime editable)
 };
 
 // Configure each servo (customize for your setup)
 const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
-    // enabled, min,  max,  trim, reverse
-    {true,     150,  600,  0,    false},  // Servo 0: Reindeer Head
-    {true,     150,  600,  0,    false},  // Servo 1: Reindeer Front
-    {true,     150,  600,  0,    false},  // Servo 2: Reindeer Rear
-    {true,     150,  600,  0,    false},  // Servo 3: Sleigh Tilt
-    {true,     150,  600,  0,    false},  // Servo 4: Santa Wave
-    {true,     150,  600,  0,    false},  // Servo 5: Santa Nod
-    {false,    150,  600,  0,    false},  // Servo 6: Spare 1 (disabled)
-    {false,    150,  600,  0,    false}   // Servo 7: Spare 2 (disabled)
+    // enabled, min,  max,  trim, reverse, name
+    {true,     150,  600,  0,    false,   "Reindeer Head"},  // Servo 0
+    {true,     150,  600,  0,    false,   "Reindeer Front"}, // Servo 1
+    {true,     150,  600,  0,    false,   "Reindeer Rear"},  // Servo 2
+    {true,     150,  600,  0,    false,   "Sleigh Tilt"},    // Servo 3
+    {true,     150,  600,  0,    false,   "Santa Wave"},     // Servo 4
+    {true,     150,  600,  0,    false,   "Santa Nod"},      // Servo 5
+    {false,    150,  600,  0,    false,   "Spare 1"},        // Servo 6 (disabled)
+    {false,    150,  600,  0,    false,   "Spare 2"}         // Servo 7 (disabled)
 };
 
 // ============================================

@@ -311,6 +311,11 @@ void loadServoConfigs() {
         runtime_servo_configs[i].max_pulse = preferences.getUShort((prefix + "max").c_str(), SERVO_CONFIGS[i].max_pulse);
         runtime_servo_configs[i].trim = preferences.getShort((prefix + "trim").c_str(), SERVO_CONFIGS[i].trim);
         runtime_servo_configs[i].reverse = preferences.getBool((prefix + "rev").c_str(), SERVO_CONFIGS[i].reverse);
+
+        // Load name with default from SERVO_CONFIGS
+        String savedName = preferences.getString((prefix + "name").c_str(), SERVO_CONFIGS[i].name);
+        strncpy(runtime_servo_configs[i].name, savedName.c_str(), sizeof(runtime_servo_configs[i].name) - 1);
+        runtime_servo_configs[i].name[sizeof(runtime_servo_configs[i].name) - 1] = '\0';
     }
 
     preferences.end();
@@ -330,6 +335,7 @@ void saveServoConfigs() {
         preferences.putUShort((prefix + "max").c_str(), runtime_servo_configs[i].max_pulse);
         preferences.putShort((prefix + "trim").c_str(), runtime_servo_configs[i].trim);
         preferences.putBool((prefix + "rev").c_str(), runtime_servo_configs[i].reverse);
+        preferences.putString((prefix + "name").c_str(), runtime_servo_configs[i].name);
     }
 
     preferences.end();
@@ -531,7 +537,7 @@ void setupPCA9685() {
             Serial.print("Servo ");
             Serial.print(i);
             Serial.print(" (");
-            Serial.print(SERVO_NAMES[i]);
+            Serial.print(runtime_servo_configs[i].name);
             Serial.print(") on GPIO ");
             Serial.print(SERVO_GPIO_PINS[i]);
             Serial.print(" → LEDC channel ");
@@ -572,7 +578,7 @@ void setupPCA9685() {
             Serial.print("Servo ");
             Serial.print(i);
             Serial.print(" (");
-            Serial.print(SERVO_NAMES[i]);
+            Serial.print(runtime_servo_configs[i].name);
             Serial.println(") ready");
         }
     }
@@ -589,7 +595,7 @@ void testAllServos() {
             Serial.print("Servo ");
             Serial.print(i);
             Serial.print(" (");
-            Serial.print(SERVO_NAMES[i]);
+            Serial.print(runtime_servo_configs[i].name);
             Serial.println(") - DISABLED");
             continue;
         }
@@ -597,7 +603,7 @@ void testAllServos() {
         Serial.print("Testing Servo ");
         Serial.print(i);
         Serial.print(" (");
-        Serial.print(SERVO_NAMES[i]);
+        Serial.print(runtime_servo_configs[i].name);
         Serial.println(")...");
 
         // Center position
@@ -2059,12 +2065,19 @@ void handleGetServoConfigs() {
     for (int i = 0; i < NUM_SERVOS; i++) {
         JsonObject servo = servos.createNestedObject();
         servo["index"] = i;
-        servo["name"] = SERVO_NAMES[i];
+        servo["name"] = runtime_servo_configs[i].name;
         servo["enabled"] = runtime_servo_configs[i].enabled;
         servo["min_pulse"] = runtime_servo_configs[i].min_pulse;
         servo["max_pulse"] = runtime_servo_configs[i].max_pulse;
         servo["trim"] = runtime_servo_configs[i].trim;
         servo["reverse"] = runtime_servo_configs[i].reverse;
+
+        // Add GPIO pin information
+        #if PCA9685_ENABLED
+        servo["gpio"] = i;  // PCA9685 channel number
+        #else
+        servo["gpio"] = SERVO_GPIO_PINS[i];  // Direct GPIO pin
+        #endif
     }
 
     // Add hardware limits
@@ -2116,6 +2129,11 @@ void handleSaveServoConfigs() {
             }
             if (servo.containsKey("reverse")) {
                 runtime_servo_configs[index].reverse = servo["reverse"];
+            }
+            if (servo.containsKey("name")) {
+                String name = servo["name"].as<String>();
+                strncpy(runtime_servo_configs[index].name, name.c_str(), sizeof(runtime_servo_configs[index].name) - 1);
+                runtime_servo_configs[index].name[sizeof(runtime_servo_configs[index].name) - 1] = '\0';
             }
         }
     }
@@ -2681,7 +2699,7 @@ void handleAPIStatus() {
     JsonArray servos = doc.createNestedArray("servos");
     for (int i = 0; i < NUM_SERVOS; i++) {
         JsonObject servo = servos.createNestedObject();
-        servo["name"] = SERVO_NAMES[i];
+        servo["name"] = runtime_servo_configs[i].name;
         servo["enabled"] = runtime_servo_configs[i].enabled;
         servo["angle"] = servoStates[i].current_angle;
         servo["source"] = servoStates[i].control_source;
@@ -3667,10 +3685,21 @@ void handleServoCalibrationPage() {
             servoConfigs.forEach((servo, idx) => {
                 const card = document.createElement('div');
                 card.className = 'servo-card';
+                const gpioLabel = hardwareLimits.pca9685 ? 'Channel' : 'GPIO';
                 card.innerHTML = `
                     <div class="servo-header">
-                        <div class="servo-name">${servo.name}</div>
-                        <div class="servo-index">Servo ${servo.index}</div>
+                        <div style="flex: 1;">
+                            <input type="text" id="name_${servo.index}" value="${servo.name}"
+                                   onchange="updateServoConfig(${servo.index}, 'name', this.value)"
+                                   style="font-size: 1.3em; font-weight: 600; color: #667eea; border: 2px solid #e0e0e0; border-radius: 6px; padding: 5px 10px; width: 100%;"
+                                   placeholder="Servo Name">
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div style="background: #f0f0f0; padding: 5px 12px; border-radius: 20px; font-size: 0.9em; font-weight: 600;">
+                                ${gpioLabel} ${servo.gpio}
+                            </div>
+                            <div class="servo-index">Servo ${servo.index}</div>
+                        </div>
                     </div>
 
                     <div class="checkbox-group">
