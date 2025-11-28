@@ -123,15 +123,18 @@
 
 // Direct GPIO pin assignments for servos (only used when PCA9685_ENABLED = false)
 // Connect servos directly to these ESP32 GPIO pins
+// NOTE: Avoiding GPIO 14 (PWM at boot), GPIO 16 (PSRAM), GPIO 27 (unreliable)
+//       Using GPIO 18/19/23 is safe when SD_ENABLED=false (default)
+//       GPIO 22 conflicts with I2S audio, GPIO 25/26 used by I2S
 const int SERVO_GPIO_PINS[NUM_SERVOS] = {
-    13,  // Servo 0: Reindeer Head    (GPIO 13)
-    12,  // Servo 1: Reindeer Front   (GPIO 12)
-    14,  // Servo 2: Reindeer Rear    (GPIO 14)
-    27,  // Servo 3: Sleigh Tilt      (GPIO 27)
-    26,  // Servo 4: Santa Wave       (GPIO 26)
-    25,  // Servo 5: Santa Nod        (GPIO 25)
-    33,  // Servo 6: Spare 1          (GPIO 33)
-    32   // Servo 7: Spare 2          (GPIO 32)
+    13,  // Servo 0: Reindeer Head    (GPIO 13) - Always safe
+    17,  // Servo 1: Reindeer Front   (GPIO 17) - Always safe (changed from GPIO 12)
+    19,  // Servo 2: Reindeer Rear    (GPIO 19) - Safe when SD disabled (changed from GPIO 14)
+    18,  // Servo 3: Sleigh Tilt      (GPIO 18) - Safe when SD disabled (changed from GPIO 27)
+    26,  // Servo 4: Santa Wave       (GPIO 26) - I2S_BCLK (OK if audio not playing simultaneously)
+    25,  // Servo 5: Santa Nod        (GPIO 25) - I2S_LRC (OK if audio not playing simultaneously)
+    33,  // Servo 6: Spare 1          (GPIO 33) - Always safe
+    32   // Servo 7: Spare 2          (GPIO 32) - Always safe
 };
 
 #define TEST_SERVOS_ON_STARTUP false      // Test all servos during startup (disabled by default to avoid issues)
@@ -191,7 +194,7 @@ const ServoConfig SERVO_CONFIGS[NUM_SERVOS] = {
 // TRIGGER INPUT PINS
 // ============================================
 #define BUTTON_PIN 4                      // Physical button input (active LOW with pullup)
-#define PIR_SENSOR_PIN 16                 // PIR motion sensor input (active HIGH)
+#define PIR_SENSOR_PIN 35                 // PIR motion sensor input (active HIGH) - Input only, safe
 #define BUTTON_LED_PIN 2                  // LED indicator (built-in LED on most ESP32)
 
 // Button timing
