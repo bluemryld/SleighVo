@@ -169,6 +169,13 @@ RuntimeSettings runtime_settings = {
 };
 
 // ============================================
+// RUNTIME SERVO CONFIGURATION
+// ============================================
+// Runtime servo configs that can be modified via web interface
+// Initialized from SERVO_CONFIGS but can be saved to NVS
+ServoConfig runtime_servo_configs[NUM_SERVOS];
+
+// ============================================
 // BUTTON/SENSOR STATE
 // ============================================
 struct ButtonState {
@@ -289,6 +296,45 @@ void saveSettings() {
     preferences.end();
 
     Serial.println("✓ Settings saved to NVS");
+}
+
+void loadServoConfigs() {
+    preferences.begin("sleighvo", true);  // Read-only
+
+    // Load each servo configuration
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        String prefix = "srv" + String(i) + "_";
+
+        // Load with defaults from SERVO_CONFIGS
+        runtime_servo_configs[i].enabled = preferences.getBool((prefix + "en").c_str(), SERVO_CONFIGS[i].enabled);
+        runtime_servo_configs[i].min_pulse = preferences.getUShort((prefix + "min").c_str(), SERVO_CONFIGS[i].min_pulse);
+        runtime_servo_configs[i].max_pulse = preferences.getUShort((prefix + "max").c_str(), SERVO_CONFIGS[i].max_pulse);
+        runtime_servo_configs[i].trim = preferences.getShort((prefix + "trim").c_str(), SERVO_CONFIGS[i].trim);
+        runtime_servo_configs[i].reverse = preferences.getBool((prefix + "rev").c_str(), SERVO_CONFIGS[i].reverse);
+    }
+
+    preferences.end();
+
+    Serial.println("✓ Servo configurations loaded from NVS");
+}
+
+void saveServoConfigs() {
+    preferences.begin("sleighvo", false);  // Read-write
+
+    // Save each servo configuration
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        String prefix = "srv" + String(i) + "_";
+
+        preferences.putBool((prefix + "en").c_str(), runtime_servo_configs[i].enabled);
+        preferences.putUShort((prefix + "min").c_str(), runtime_servo_configs[i].min_pulse);
+        preferences.putUShort((prefix + "max").c_str(), runtime_servo_configs[i].max_pulse);
+        preferences.putShort((prefix + "trim").c_str(), runtime_servo_configs[i].trim);
+        preferences.putBool((prefix + "rev").c_str(), runtime_servo_configs[i].reverse);
+    }
+
+    preferences.end();
+
+    Serial.println("✓ Servo configurations saved to NVS");
 }
 
 void startConfigPortal() {
@@ -472,7 +518,7 @@ void setupPCA9685() {
 
     // Initialize each servo with LEDC
     for (int i = 0; i < NUM_SERVOS; i++) {
-        if (SERVO_CONFIGS[i].enabled) {
+        if (runtime_servo_configs[i].enabled) {
             // Attach LEDC channel to GPIO pin
             ledcAttachPin(SERVO_GPIO_PINS[i], i);  // Channel number = servo index
 
@@ -521,7 +567,7 @@ void setupPCA9685() {
 
     // Initialize all servos to center
     for (int i = 0; i < NUM_SERVOS; i++) {
-        if (SERVO_CONFIGS[i].enabled) {
+        if (runtime_servo_configs[i].enabled) {
             setServoAngle(i, 90, "startup");
             Serial.print("Servo ");
             Serial.print(i);
@@ -539,7 +585,7 @@ void testAllServos() {
 
     // Test each servo individually
     for (int i = 0; i < NUM_SERVOS; i++) {
-        if (!SERVO_CONFIGS[i].enabled) {
+        if (!runtime_servo_configs[i].enabled) {
             Serial.print("Servo ");
             Serial.print(i);
             Serial.print(" (");
@@ -672,7 +718,7 @@ void processDDPPacket() {
     for (uint16_t i = 0; i < dataLen && i < (NUM_SERVOS * DDP_BYTES_PER_SERVO); i += DDP_BYTES_PER_SERVO) {
         uint32_t servoIndex = pixelOffset + (i / DDP_BYTES_PER_SERVO);
 
-        if (servoIndex < NUM_SERVOS && SERVO_CONFIGS[servoIndex].enabled) {
+        if (servoIndex < NUM_SERVOS && runtime_servo_configs[servoIndex].enabled) {
             // Use first byte (R channel) as position value (0-255)
             uint8_t position = pixelData[i];
             // Map 0-255 to 0-180 degrees
@@ -770,25 +816,25 @@ void setupTriggers() {
 
 void setServoAngle(int servoIndex, uint8_t angle, const char* source) {
     if (servoIndex < 0 || servoIndex >= NUM_SERVOS) return;
-    if (!SERVO_CONFIGS[servoIndex].enabled) return;
+    if (!runtime_servo_configs[servoIndex].enabled) return;
 
     angle = constrain(angle, 0, 180);
 
 #if PCA9685_ENABLED
     // PCA9685 mode - use pulse values
     uint16_t pulse;
-    if (SERVO_CONFIGS[servoIndex].reverse) {
+    if (runtime_servo_configs[servoIndex].reverse) {
         pulse = map(180 - angle, 0, 180,
-                   SERVO_CONFIGS[servoIndex].min_pulse,
-                   SERVO_CONFIGS[servoIndex].max_pulse);
+                   runtime_servo_configs[servoIndex].min_pulse,
+                   runtime_servo_configs[servoIndex].max_pulse);
     } else {
         pulse = map(angle, 0, 180,
-                   SERVO_CONFIGS[servoIndex].min_pulse,
-                   SERVO_CONFIGS[servoIndex].max_pulse);
+                   runtime_servo_configs[servoIndex].min_pulse,
+                   runtime_servo_configs[servoIndex].max_pulse);
     }
 
     // Apply trim
-    pulse = constrain(pulse + SERVO_CONFIGS[servoIndex].trim, SERVOMIN, SERVOMAX);
+    pulse = constrain(pulse + runtime_servo_configs[servoIndex].trim, SERVOMIN, SERVOMAX);
 
     // Write to PCA9685
     pwm.setPWM(servoIndex, 0, pulse);
@@ -799,7 +845,7 @@ void setServoAngle(int servoIndex, uint8_t angle, const char* source) {
     uint8_t actualAngle = angle;
 
     // Apply reverse
-    if (SERVO_CONFIGS[servoIndex].reverse) {
+    if (runtime_servo_configs[servoIndex].reverse) {
         actualAngle = 180 - angle;
     }
 
@@ -807,7 +853,7 @@ void setServoAngle(int servoIndex, uint8_t angle, const char* source) {
     uint16_t pulse_us = map(actualAngle, 0, 180, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
 
     // Apply trim (treat as microseconds adjustment)
-    pulse_us = constrain(pulse_us + SERVO_CONFIGS[servoIndex].trim, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+    pulse_us = constrain(pulse_us + runtime_servo_configs[servoIndex].trim, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
 
     // Convert to duty cycle
     // Period = 1/50Hz = 20,000 microseconds
@@ -1019,7 +1065,7 @@ void stopStandalonePlayback() {
     
     // Return servos to neutral
     for (int i = 0; i < NUM_SERVOS; i++) {
-        if (SERVO_CONFIGS[i].enabled) {
+        if (runtime_servo_configs[i].enabled) {
             setServoAngle(i, 90, "idle");
         }
     }
@@ -1040,7 +1086,7 @@ void updateIdleAnimation() {
     if (millis() - last_idle_move > IDLE_ANIMATION_INTERVAL) {
         // Random subtle movement
         int servo = random(0, NUM_SERVOS);
-        if (SERVO_CONFIGS[servo].enabled) {
+        if (runtime_servo_configs[servo].enabled) {
             int angle = random(80, 100);  // Small range around center
             setServoAngle(servo, angle, "idle");
             
@@ -1239,7 +1285,7 @@ void processE131Packet() {
         
         // Process servos
         for (int servo = 0; servo < NUM_SERVOS; servo++) {
-            if (SERVO_CONFIGS[servo].enabled) {
+            if (runtime_servo_configs[servo].enabled) {
                 int channelIndex = servo * 3;
                 if (channelIndex < E131_CHANNELS) {
                     uint8_t value = packet.property_values[channelIndex + 1];
@@ -1758,6 +1804,15 @@ void handleConfigPortal() {
 
                 <button type="submit" class="btn btn-primary">💾 Save & Connect</button>
             </form>
+
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
+                <p style="text-align: center; color: #666; margin-bottom: 15px; font-size: 0.9em;">
+                    Already connected? Access calibration tools:
+                </p>
+                <a href="/calibrate" class="btn btn-secondary" style="display: block; text-decoration: none; text-align: center;">
+                    🎛️ Servo Calibration
+                </a>
+            </div>
         </div>
     </div>
 
@@ -1994,6 +2049,83 @@ void handleSaveSettings() {
     server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Settings saved. Restart required for some changes.\"}");
 
     Serial.println("✓ Settings updated via API");
+}
+
+void handleGetServoConfigs() {
+    JsonDocument doc;
+
+    // Create array of servo configurations
+    JsonArray servos = doc.createNestedArray("servos");
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        JsonObject servo = servos.createNestedObject();
+        servo["index"] = i;
+        servo["name"] = SERVO_NAMES[i];
+        servo["enabled"] = runtime_servo_configs[i].enabled;
+        servo["min_pulse"] = runtime_servo_configs[i].min_pulse;
+        servo["max_pulse"] = runtime_servo_configs[i].max_pulse;
+        servo["trim"] = runtime_servo_configs[i].trim;
+        servo["reverse"] = runtime_servo_configs[i].reverse;
+    }
+
+    // Add hardware limits
+    doc["hardware"]["pca9685"] = PCA9685_ENABLED;
+    #if PCA9685_ENABLED
+    doc["hardware"]["min_limit"] = SERVOMIN;
+    doc["hardware"]["max_limit"] = SERVOMAX;
+    #else
+    doc["hardware"]["min_limit"] = SERVO_MIN_PULSE_US;
+    doc["hardware"]["max_limit"] = SERVO_MAX_PULSE_US;
+    #endif
+
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+}
+
+void handleSaveServoConfigs() {
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"No data\"}");
+        return;
+    }
+
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+
+    if (!doc.containsKey("servos")) {
+        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing servos array\"}");
+        return;
+    }
+
+    JsonArray servos = doc["servos"].as<JsonArray>();
+
+    // Update servo configurations
+    for (JsonObject servo : servos) {
+        int index = servo["index"];
+        if (index >= 0 && index < NUM_SERVOS) {
+            if (servo.containsKey("enabled")) {
+                runtime_servo_configs[index].enabled = servo["enabled"];
+            }
+            if (servo.containsKey("min_pulse")) {
+                runtime_servo_configs[index].min_pulse = servo["min_pulse"];
+            }
+            if (servo.containsKey("max_pulse")) {
+                runtime_servo_configs[index].max_pulse = servo["max_pulse"];
+            }
+            if (servo.containsKey("trim")) {
+                runtime_servo_configs[index].trim = servo["trim"];
+            }
+            if (servo.containsKey("reverse")) {
+                runtime_servo_configs[index].reverse = servo["reverse"];
+            }
+        }
+    }
+
+    // Save to NVS
+    saveServoConfigs();
+
+    server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Servo configurations saved\"}");
+
+    Serial.println("✓ Servo configurations updated via API");
 }
 
 // ============================================
@@ -2251,6 +2383,7 @@ void handleRoot() {
         </div>
 
         <div class="nav-bar">
+            <a href="/calibrate" class="nav-link">🎛️ Servo Calibration</a>
             <a href="/settings" class="nav-link">⚙️ Settings</a>
         </div>
 
@@ -2549,7 +2682,7 @@ void handleAPIStatus() {
     for (int i = 0; i < NUM_SERVOS; i++) {
         JsonObject servo = servos.createNestedObject();
         servo["name"] = SERVO_NAMES[i];
-        servo["enabled"] = SERVO_CONFIGS[i].enabled;
+        servo["enabled"] = runtime_servo_configs[i].enabled;
         servo["angle"] = servoStates[i].current_angle;
         servo["source"] = servoStates[i].control_source;
     }
@@ -2602,7 +2735,7 @@ void handleAPITestMode() {
     } else {
         // Enter test mode - center all servos first
         for (int i = 0; i < NUM_SERVOS; i++) {
-            if (SERVO_CONFIGS[i].enabled) {
+            if (runtime_servo_configs[i].enabled) {
                 setServoAngle(i, 90, "test_init");
             }
         }
@@ -2635,7 +2768,7 @@ void handleAPISetServo() {
         return;
     }
 
-    if (!SERVO_CONFIGS[servoIndex].enabled) {
+    if (!runtime_servo_configs[servoIndex].enabled) {
         server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Servo not enabled\"}");
         return;
     }
@@ -2919,6 +3052,7 @@ void handleSettingsPage() {
 
         <div class="nav-buttons">
             <a href="/" class="nav-button">← Back to Control</a>
+            <a href="/calibrate" class="nav-button">🎛️ Servo Calibration</a>
             <button onclick="loadSettings()" class="nav-button">🔄 Refresh</button>
         </div>
 
@@ -3177,6 +3311,638 @@ void handleSettingsPage() {
     server.send(200, "text/html", html);
 }
 
+void handleServoCalibrationPage() {
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SleighVo Servo Calibration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .nav-button {
+            padding: 10px 20px;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            color: #667eea;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+
+        .nav-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .servo-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .servo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .servo-name {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .servo-index {
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+
+        .servo-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+
+        .control-group input[type="number"],
+        .control-group input[type="range"] {
+            padding: 8px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s ease;
+        }
+
+        .control-group input[type="number"]:focus,
+        .control-group input[type="range"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .control-group input[type="range"] {
+            height: 40px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f8f8f8;
+            border-radius: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            cursor: pointer;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .test-controls {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px solid #f0f0f0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #555;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .save-section {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-top: 20px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .message.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #ef4444;
+        }
+
+        .range-display {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .range-value {
+            min-width: 50px;
+            text-align: center;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .hardware-info {
+            background: #f8f8f8;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .hardware-info span {
+            display: inline-block;
+            margin: 0 15px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎛️ Servo Calibration</h1>
+            <p>Configure servo parameters and test movements</p>
+        </div>
+
+        <div class="nav-buttons">
+            <a href="/" class="nav-button">🏠 Home</a>
+            <a href="/settings" class="nav-button">⚙️ Settings</a>
+        </div>
+
+        <div class="hardware-info" id="hardwareInfo">
+            <span>Loading hardware information...</span>
+        </div>
+
+        <div class="servo-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 style="color: white; border-bottom: none; margin: 0; padding: 0;">🔧 Test Mode</h2>
+                    <p style="opacity: 0.9; margin-top: 5px; font-size: 0.9em;">Enable real-time servo testing and calibration</p>
+                </div>
+                <button id="testModeBtn" onclick="toggleTestMode()" class="btn btn-success" style="min-width: 150px;">
+                    Enable Test Mode
+                </button>
+            </div>
+        </div>
+
+        <div id="servosList"></div>
+
+        <div class="save-section">
+            <button onclick="saveAllConfigs()" class="btn btn-success" style="font-size: 1.2em; padding: 15px 40px;">
+                💾 Save All Configurations
+            </button>
+            <div id="message" class="message"></div>
+        </div>
+    </div>
+
+    <script>
+        let servoConfigs = [];
+        let hardwareLimits = {};
+        let testModeEnabled = false;
+        let currentPositions = {};
+
+        function loadConfigs() {
+            fetch('/api/servos/config')
+                .then(response => response.json())
+                .then(data => {
+                    servoConfigs = data.servos;
+                    hardwareLimits = data.hardware;
+                    renderHardwareInfo();
+                    renderServos();
+                })
+                .catch(err => {
+                    showMessage('Error loading configurations: ' + err.message, true);
+                });
+        }
+
+        function renderHardwareInfo() {
+            const info = document.getElementById('hardwareInfo');
+            const mode = hardwareLimits.pca9685 ? 'PCA9685 (I2C)' : 'Direct GPIO (LEDC)';
+            info.innerHTML = `
+                <span>Mode: ${mode}</span>
+                <span>Min Limit: ${hardwareLimits.min_limit}</span>
+                <span>Max Limit: ${hardwareLimits.max_limit}</span>
+            `;
+        }
+
+        function renderServos() {
+            const container = document.getElementById('servosList');
+            container.innerHTML = '';
+
+            servoConfigs.forEach((servo, idx) => {
+                const card = document.createElement('div');
+                card.className = 'servo-card';
+                card.innerHTML = `
+                    <div class="servo-header">
+                        <div class="servo-name">${servo.name}</div>
+                        <div class="servo-index">Servo ${servo.index}</div>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enabled_${servo.index}"
+                               ${servo.enabled ? 'checked' : ''}
+                               onchange="updateServoConfig(${servo.index}, 'enabled', this.checked)">
+                        <label for="enabled_${servo.index}">Enable Servo</label>
+                    </div>
+
+                    <div class="servo-controls ${servo.enabled ? '' : 'disabled'}" id="controls_${servo.index}">
+                        <div class="control-group">
+                            <label>Min Pulse</label>
+                            <input type="number" id="min_${servo.index}" value="${servo.min_pulse}"
+                                   min="${hardwareLimits.min_limit}" max="${hardwareLimits.max_limit}"
+                                   onchange="updateServoConfig(${servo.index}, 'min_pulse', parseInt(this.value))">
+                        </div>
+
+                        <div class="control-group">
+                            <label>Max Pulse</label>
+                            <input type="number" id="max_${servo.index}" value="${servo.max_pulse}"
+                                   min="${hardwareLimits.min_limit}" max="${hardwareLimits.max_limit}"
+                                   onchange="updateServoConfig(${servo.index}, 'max_pulse', parseInt(this.value))">
+                        </div>
+
+                        <div class="control-group">
+                            <label>Trim: <span id="trim_value_${servo.index}">${servo.trim}</span></label>
+                            <div class="range-display">
+                                <span>-100</span>
+                                <input type="range" id="trim_${servo.index}" value="${servo.trim}"
+                                       min="-100" max="100" step="1"
+                                       oninput="updateTrimDisplay(${servo.index}, this.value)"
+                                       onchange="updateServoConfig(${servo.index}, 'trim', parseInt(this.value))">
+                                <span>+100</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="reverse_${servo.index}"
+                                       ${servo.reverse ? 'checked' : ''}
+                                       onchange="updateServoConfig(${servo.index}, 'reverse', this.checked)">
+                                <label for="reverse_${servo.index}">Reverse Direction</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="test-controls ${servo.enabled ? '' : 'disabled'}" id="test_${servo.index}" style="display: none;">
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 10px;">
+                            <label style="font-weight: 600; color: #667eea; margin-bottom: 10px; display: block;">
+                                Live Position Control: <span id="position_value_${servo.index}" style="font-size: 1.2em;">90</span>°
+                            </label>
+                            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+                                <button onclick="adjustPosition(${servo.index}, -10)" class="btn btn-secondary" style="padding: 8px 15px;">-10°</button>
+                                <button onclick="adjustPosition(${servo.index}, -1)" class="btn btn-secondary" style="padding: 8px 15px;">-1°</button>
+                                <input type="range" id="position_slider_${servo.index}"
+                                       min="0" max="180" value="90" step="1"
+                                       style="flex: 1;"
+                                       oninput="updatePositionDisplay(${servo.index}, this.value)"
+                                       onchange="setServoPosition(${servo.index}, parseInt(this.value))">
+                                <button onclick="adjustPosition(${servo.index}, 1)" class="btn btn-secondary" style="padding: 8px 15px;">+1°</button>
+                                <button onclick="adjustPosition(${servo.index}, 10)" class="btn btn-secondary" style="padding: 8px 15px;">+10°</button>
+                            </div>
+                            <div style="display: flex; gap: 10px; justify-content: center;">
+                                <button onclick="captureMinPosition(${servo.index})" class="btn btn-primary" style="flex: 1;">
+                                    📍 Set as Min Pulse
+                                </button>
+                                <button onclick="captureMaxPosition(${servo.index})" class="btn btn-primary" style="flex: 1;">
+                                    📍 Set as Max Pulse
+                                </button>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button onclick="testServo(${servo.index}, 0)" class="btn btn-secondary">0°</button>
+                            <button onclick="testServo(${servo.index}, 45)" class="btn btn-secondary">45°</button>
+                            <button onclick="testServo(${servo.index}, 90)" class="btn btn-primary">90° (Center)</button>
+                            <button onclick="testServo(${servo.index}, 135)" class="btn btn-secondary">135°</button>
+                            <button onclick="testServo(${servo.index}, 180)" class="btn btn-secondary">180°</button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateServoConfig(index, field, value) {
+            servoConfigs[index][field] = value;
+
+            if (field === 'enabled') {
+                const controls = document.getElementById('controls_' + index);
+                const test = document.getElementById('test_' + index);
+                if (value) {
+                    controls.classList.remove('disabled');
+                    test.classList.remove('disabled');
+                } else {
+                    controls.classList.add('disabled');
+                    test.classList.add('disabled');
+                }
+            }
+        }
+
+        function updateTrimDisplay(index, value) {
+            document.getElementById('trim_value_' + index).textContent = value;
+        }
+
+        function toggleTestMode() {
+            const btn = document.getElementById('testModeBtn');
+
+            // Call API to toggle test mode
+            fetch('/api/testmode', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'test_mode_enabled') {
+                    testModeEnabled = true;
+                    btn.textContent = 'Disable Test Mode';
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-danger');
+                    btn.style.background = '#ef4444';
+
+                    // Show all test controls
+                    servoConfigs.forEach((servo, idx) => {
+                        if (servo.enabled) {
+                            const testDiv = document.getElementById('test_' + servo.index);
+                            if (testDiv) {
+                                testDiv.style.display = 'block';
+                            }
+                            // Initialize position to 90 degrees
+                            currentPositions[servo.index] = 90;
+                        }
+                    });
+
+                    showMessage('✓ Test mode enabled - you can now control servos', false);
+                } else if (data.status === 'test_mode_disabled') {
+                    testModeEnabled = false;
+                    btn.textContent = 'Enable Test Mode';
+                    btn.classList.remove('btn-danger');
+                    btn.classList.add('btn-success');
+                    btn.style.background = '#10b981';
+
+                    // Hide all test controls
+                    servoConfigs.forEach((servo, idx) => {
+                        const testDiv = document.getElementById('test_' + servo.index);
+                        if (testDiv) {
+                            testDiv.style.display = 'none';
+                        }
+                    });
+
+                    showMessage('Test mode disabled', false);
+                }
+            })
+            .catch(err => showMessage('Error toggling test mode: ' + err.message, true));
+        }
+
+        function updatePositionDisplay(index, value) {
+            document.getElementById('position_value_' + index).textContent = value;
+            currentPositions[index] = parseInt(value);
+        }
+
+        function setServoPosition(index, angle) {
+            currentPositions[index] = angle;
+            testServo(index, angle);
+        }
+
+        function adjustPosition(index, delta) {
+            const slider = document.getElementById('position_slider_' + index);
+            let newValue = (currentPositions[index] || 90) + delta;
+            newValue = Math.max(0, Math.min(180, newValue)); // Clamp to 0-180
+
+            slider.value = newValue;
+            updatePositionDisplay(index, newValue);
+            setServoPosition(index, newValue);
+        }
+
+        function captureMinPosition(index) {
+            const currentPos = currentPositions[index] || 90;
+            const oldMin = servoConfigs[index].min_pulse;
+            const oldMax = servoConfigs[index].max_pulse;
+
+            // Calculate what pulse value is currently being sent for this angle
+            // This is the pulse value that achieves the current physical position
+            const currentPulse = Math.round(oldMin + (currentPos / 180) * (oldMax - oldMin));
+
+            // Set this as the new minimum pulse (corresponding to 0°)
+            servoConfigs[index].min_pulse = currentPulse;
+            document.getElementById('min_' + index).value = currentPulse;
+
+            showMessage(`✓ Min pulse set to ${currentPulse} (servo at ${currentPos}° will now be 0°)`, false);
+        }
+
+        function captureMaxPosition(index) {
+            const currentPos = currentPositions[index] || 90;
+            const oldMin = servoConfigs[index].min_pulse;
+            const oldMax = servoConfigs[index].max_pulse;
+
+            // Calculate what pulse value is currently being sent for this angle
+            // This is the pulse value that achieves the current physical position
+            const currentPulse = Math.round(oldMin + (currentPos / 180) * (oldMax - oldMin));
+
+            // Set this as the new maximum pulse (corresponding to 180°)
+            servoConfigs[index].max_pulse = currentPulse;
+            document.getElementById('max_' + index).value = currentPulse;
+
+            showMessage(`✓ Max pulse set to ${currentPulse} (servo at ${currentPos}° will now be 180°)`, false);
+        }
+
+        function testServo(index, angle) {
+            fetch('/api/servo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ servo: index, angle: angle })
+            })
+            .then(response => {
+                if (response.status === 403) {
+                    throw new Error('Test mode must be enabled first! Click the "Enable Test Mode" button.');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    // Update position tracking and slider
+                    currentPositions[index] = angle;
+                    const slider = document.getElementById('position_slider_' + index);
+                    const display = document.getElementById('position_value_' + index);
+                    if (slider) slider.value = angle;
+                    if (display) display.textContent = angle;
+                    console.log(`Servo ${index} moved to ${angle}°`);
+                } else {
+                    showMessage('Error: ' + (data.message || 'Failed to move servo'), true);
+                }
+            })
+            .catch(err => showMessage(err.message, true));
+        }
+
+        function saveAllConfigs() {
+            const payload = { servos: servoConfigs };
+
+            fetch('/api/servos/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showMessage('✓ All configurations saved successfully!', false);
+                } else {
+                    showMessage('Error: ' + data.message, true);
+                }
+            })
+            .catch(err => showMessage('Error: ' + err.message, true));
+        }
+
+        function showMessage(text, isError) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = 'message ' + (isError ? 'error' : 'success');
+            msg.style.display = 'block';
+            setTimeout(() => {
+                msg.style.display = 'none';
+            }, 5000);
+        }
+
+        window.onload = loadConfigs;
+    </script>
+</body>
+</html>
+)rawliteral";
+
+    server.send(200, "text/html", html);
+}
+
 void setupWebServer() {
     if (!ENABLE_WEB_SERVER) {
         Serial.println("\n=== Web Server DISABLED ===");
@@ -3207,6 +3973,11 @@ void setupWebServer() {
     server.on("/api/settings", HTTP_POST, handleSaveSettings);
     server.on("/settings", handleSettingsPage);
     server.on("/api/restart", HTTP_POST, handleAPIRestart);
+
+    // Servo configuration routes
+    server.on("/calibrate", handleServoCalibrationPage);
+    server.on("/api/servos/config", HTTP_GET, handleGetServoConfigs);
+    server.on("/api/servos/config", HTTP_POST, handleSaveServoConfigs);
 
     // 404 handler
     server.onNotFound([]() {
@@ -3241,6 +4012,7 @@ void setup() {
 
     // Load runtime settings from NVS
     loadSettings();
+    loadServoConfigs();
 
     setupWiFi();
     setupPCA9685();
